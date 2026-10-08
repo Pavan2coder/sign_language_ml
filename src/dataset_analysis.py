@@ -30,17 +30,16 @@ from pathlib import Path
 import pandas as pd
 
 # ── Project config ────────────────────────────────────────────────────────────
-# Add project root to sys.path so "from src.config import …" works from any cwd
-_SCRIPT_DIR   = Path(__file__).resolve().parent   # …/sign-lan/src
-_PROJECT_ROOT = _SCRIPT_DIR.parent                # …/sign-lan
+_SCRIPT_DIR   = Path(__file__).resolve().parent
+_PROJECT_ROOT = _SCRIPT_DIR.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from src.config import (
-    TRAIN_CSV,       # D:\ISL-DATA\MappingFiles\PersonDependentTrain.csv
-    TEST_CSV,        # D:\ISL-DATA\MappingFiles\PersonDependentTest.csv
-    MEDIAPIPE_ROOT,  # D:\ISL-DATA\Landmarks\MediaPipe
-    REPORT_DIR,      # sign-lan/reports
+    TRAIN_CSV,
+    TEST_CSV,
+    MEDIAPIPE_ROOT,
+    REPORT_DIR,
 )
 
 
@@ -54,9 +53,64 @@ def section(title: str) -> None:
     print("=" * 70)
 
 
+# ── STEP 1: Load mapping CSVs ─────────────────────────────────────────────────
+
+def load_mapping_csv(csv_path: Path) -> pd.DataFrame:
+    """
+    Load a mapping CSV into a pandas DataFrame.
+
+    Each CSV has exactly ONE column (e.g. 'fold_0' or 'fold_2') that
+    contains Linux-style absolute paths to .h5 files.  We rename that
+    column to 'raw_path' so the rest of the code has a stable name to
+    work with regardless of which fold the CSV came from.
+
+    Args:
+        csv_path: Path to the CSV file.
+
+    Returns:
+        DataFrame with column 'raw_path' and two metadata attrs:
+            original_col  – the original column name
+            source_file   – the CSV file path as a string
+    """
+    if not csv_path.exists():
+        print(f"[ERROR] CSV not found: {csv_path}")
+        sys.exit(1)
+
+    df = pd.read_csv(csv_path)
+
+    # Store the original column name, then rename to a stable key
+    original_col = df.columns[0]
+    df = df.rename(columns={original_col: "raw_path"})
+
+    df.attrs["original_col"] = original_col
+    df.attrs["source_file"]  = str(csv_path)
+
+    return df
+
+
 if __name__ == "__main__":
     section("ISL Dataset Analysis — STEP 1")
-    print("Imports OK. Config loaded.")
     print("MediaPipe root :", MEDIAPIPE_ROOT)
     print("Train CSV      :", TRAIN_CSV)
     print("Test  CSV      :", TEST_CSV)
+
+    # ── Load ──────────────────────────────────────────────────────────────────
+    section("Loading mapping CSVs")
+
+    train_raw = load_mapping_csv(TRAIN_CSV)
+    test_raw  = load_mapping_csv(TEST_CSV)
+
+    print(f"Train CSV  : {TRAIN_CSV}")
+    print(f"  Shape    : {train_raw.shape}")
+    print(f"  Column   : {train_raw.attrs['original_col']}")
+    print()
+    print(f"Test CSV   : {TEST_CSV}")
+    print(f"  Shape    : {test_raw.shape}")
+    print(f"  Column   : {test_raw.attrs['original_col']}")
+
+    # ── First 5 rows ──────────────────────────────────────────────────────────
+    section("First 5 rows of Train CSV")
+    print(train_raw.head(5).to_string(index=True))
+
+    section("First 5 rows of Test CSV")
+    print(test_raw.head(5).to_string(index=True))
