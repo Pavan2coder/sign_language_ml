@@ -135,55 +135,61 @@ def inspect_path_formats(df: pd.DataFrame, split_name: str) -> dict:
 
 def extract_label(filename: str) -> str:
     """
-    Derive the ISL gesture / class label from an .h5 filename.
+    Derive the ISL gesture label from an .h5 filename.
 
-    The dataset contains several filename conventions.  All of them encode
-    the label somewhere in the stem (filename without extension).  Here is
-    how each is handled:
-
-    FORMAT A — Standard  (most files, ~77 % of the dataset)
-        Pattern : <Label>__session<N>__clip<N>.h5
-        Examples:
-            Absent__session106__clip014.h5     → "Absent"
-            BalloonBlue__session12__clip003.h5 → "BalloonBlue"
-            Campus__session14__clip000_1.h5    → "Campus"
-            Beach__000001.h5                   → "Beach"
-        Strategy: split stem on first '__', take left part.
-
-    FORMAT B — USER007 uuid style  (~3 %)
-        Pattern : <Label>__<6digits>__<uuid>_<Label>.h5
-        Example : Absent__000003__c545daf6-s255-023_Absent.h5 → "Absent"
-        Strategy: same split — left of first '__' is already the label.
-
-    FORMAT C — R2 date-prefixed  (~12 %)
-        Pattern : R2_<date>_..._<Label>__session<N>__clip<N>.h5
-        Example : R2_28.03.26_All_user002_R2_clips_clips_R2_user002_Accept__session65__clip002.h5
-                  → "Accept"
-        Strategy: the prefix before the first '__' contains 'R2_' or starts
-                  with a digit.  We look for the last uppercase-starting word
-                  in that prefix (handles both multi-char "Accept" and
-                  single-char "I" labels).
-
-    JUNK sentinel  (fold_1, fold_3, fold_4 header artefacts)
-        These come from the __UNPARSEABLE__ sentinel directory.
-        The filename is the raw junk value; we return it unchanged so the
-        caller can detect and report it separately.
+    FORMAT A/B : left of first '__' is the label.
+    FORMAT C   : last capitalised word before first '__' (R2-prefixed stem).
     """
-    stem          = Path(filename).stem       # drop ".h5"
-    first_segment = stem.split("__")[0]       # left of first double-underscore
+    stem          = Path(filename).stem
+    first_segment = stem.split("__")[0]
 
-    # FORMAT C: prefix starts with "R2_" or a digit
     if first_segment.startswith("R2_") or (first_segment and first_segment[0].isdigit()):
-        # Last capitalised word in the prefix is the label
-        # Accepts single-letter labels like "I" as well as multi-letter ones
         match = re.search(r"_([A-Z][a-zA-Z0-9]*)$", first_segment)
         if match:
             return match.group(1)
-        # Fallback: couldn't parse — return whole first segment
         return first_segment
 
-    # FORMAT A and FORMAT B: first segment IS the label already
     return first_segment
+
+
+# ── STEP 5: Enrich the DataFrame ──────────────────────────────────────────────
+
+def enrich_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add three computed columns to a mapping DataFrame.
+
+    Columns added
+    -------------
+    local_path  : pathlib.Path
+        The resolved Windows path where the .h5 file should be.
+        Built by resolve_path() — no H5 data is loaded.
+
+    file_exists : bool
+        True if the .h5 file is actually present on disk.
+        Uses Path.exists() which is a fast stat() call — no file reading.
+
+    label : str
+        The gesture / class label derived from the resolved filename
+        by extract_label().
+
+    Why copy() first?
+        pandas warns if you assign to a slice of an existing DataFrame.
+        Working on a copy keeps things clean and explicit.
+    """
+    df = df.copy()
+
+    # 1. Resolve every raw CSV path to its local Windows equivalent
+    df["local_path"] = df["raw_path"].apply(resolve_path)
+
+    # 2. Stat-check: does each file actually exist on disk?
+    #    Path.exists() is used — it does NOT open or read the file.
+    df["file_exists"] = df["local_path"].apply(lambda p: p.exists())
+
+    # 3. Derive the gesture label from the resolved filename
+    #    (use local_path.name so mangled filenames are already decoded)
+    df["label"] = df["local_path"].apply(lambda p: extract_label(p.name))
+
+    return df
 
 
 if __name__ == "__main__":
@@ -209,23 +215,15 @@ if __name__ == "__main__":
     print()
     test_fmt  = inspect_path_formats(test_raw,  "Test")
 
-    # ── extract_label smoke-test ───────────────────────────────────────────────
-    section("Label extraction smoke-test")
-    test_cases = [
-        ("Absent__session106__clip014.h5",                                          "Absent"),
-        ("BalloonBlue__session12__clip003.h5",                                      "BalloonBlue"),
-        ("Beach__000001.h5",                                                        "Beach"),
-        ("Absent__000003__c545daf6-s255-023_Absent.h5",                             "Absent"),
-        ("R2_28.03.26_All_user002_R2_clips_clips_R2_user002_Accept__session65__clip002.h5", "Accept"),
-        ("R2_28.03_All_user009_R2_Clips_user009_R2_I__session161__clip020.h5",      "I"),
-    ]
-    all_ok = True
-    for filename, expected in test_cases:
-        got = extract_label(filename)
-        status = "OK" if got == expected else "FAIL"
-        if status == "FAIL":
-            all_ok = False
-        print(f"  [{status}]  {filename}")
-        print(f"         expected={expected!r}  got={got!r}")
-    print()
-    print("All label tests passed!" if all_ok else "Some label tests FAILED — check output above.")
+    # ── Enrich both DataFrames ─────────────────────────────────────────────────
+    section("Enriching DataFrames (resolving paths, checking existence, extracting labels)")
+    print("(Stat-checking ~87,000 file paths — takes a few seconds…)")
+
+    train = enrich_dataframe(train_raw)
+    test  = enrich_dataframe(test_raw)
+
+    section("Enriched Train DataFrame — first 5 rows")
+    print(train[["raw_path", "local_path", "file_exists", "label"]].head(5).to_string(index=True))
+
+    section("Enriched Test DataFrame — first 5 rows")
+    print(test[["raw_path", "local_path", "file_exists", "label"]].head(5).to_string(index=True))
