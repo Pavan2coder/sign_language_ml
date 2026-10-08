@@ -1,0 +1,38 @@
+# Dataset
+data/
+*.h5
+*.npy
+*.npz
+
+# Local dataset path
+ISL-DATA/
+
+# Trained models
+models/
+*.pkl
+*.joblib
+*.pt
+*.pth
+*.keras
+*.h5
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
