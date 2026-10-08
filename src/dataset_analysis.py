@@ -87,21 +87,36 @@ def resolve_path(raw_path: str) -> Path:
     Convert a raw CSV path (Linux-style) to the local Windows .h5 path.
 
     FORMAT A — Normal path
-        Raw last segment : Absent__session82__clip000.h5
-        Action           : use as-is
+        Filename starts with a capital letter label.
+        Action: use filename as-is.
 
     FORMAT B — Mangled _mnt_ path
-        Raw last segment : _mnt_<uuid>_ALL_CLIPS_R2_Clips_R2_user001_Absent__session65__clip028.h5
-        Action           : strip prefix via regex, recover real filename
+        Filename starts with '_mnt_'.
+        Action: extract real filename via _SPECIAL_FILENAME_RE.
 
-    FORMAT C — R2 date-prefixed path  (added this commit)
-        Raw last segment : R2_28.03.26_All_user002_..._Accept__session65__clip002.h5
-        Action           : filename is used as-is (it IS the real disk name);
-                           label extraction handles the R2 prefix separately.
-                           No special path-resolution needed here — it falls
-                           through to the Format A branch naturally.
+    FORMAT C — R2 date-prefixed path
+        Filename starts with 'R2_'.
+        Action: use filename as-is (same as Format A — it IS the disk name).
+
+    GUARD — Unparseable / junk row  (added this commit)
+        Some rows are not file paths at all.  For example, when multiple
+        fold CSVs were concatenated the sub-header lines ('fold_1', 'fold_3',
+        'fold_4') ended up as data rows.  These have no '/' separator so
+        parts[-2] would raise an IndexError.
+
+        We detect this by checking len(parts) < 2 and return a sentinel
+        path under a fake '__UNPARSEABLE__' directory.  The file will not
+        exist on disk, so it is counted in the "missing" bucket and also
+        flagged separately in the junk-row check section.
     """
     parts = [p for p in raw_path.strip().split("/") if p]
+
+    # ── GUARD: not a valid path (e.g. bare "fold_1") ──────────────────────────
+    if len(parts) < 2:
+        # Return a sentinel so downstream code can stat-check it (will be False)
+        # and flag it as an unparseable junk row.
+        label = parts[0] if parts else "__empty__"
+        return MEDIAPIPE_ROOT / "__UNPARSEABLE__" / label
 
     user_dir     = parts[-2]
     raw_filename = parts[-1]
@@ -111,7 +126,7 @@ def resolve_path(raw_path: str) -> Path:
         match = _SPECIAL_FILENAME_RE.search(raw_filename)
         real_filename = match.group(1) if match else raw_filename
     else:
-        # FORMAT A and FORMAT C — filename is already the correct disk name
+        # FORMAT A and FORMAT C
         real_filename = raw_filename
 
     return MEDIAPIPE_ROOT / user_dir / real_filename
@@ -123,29 +138,29 @@ def inspect_path_formats(df: pd.DataFrame, split_name: str) -> dict:
     """
     Count how many rows use each path format and print a summary.
 
-    Three formats exist in the dataset:
-        A  Normal          : filename starts with a capital letter + label
-        B  _mnt_ mangled   : filename starts with '_mnt_'
-        C  R2 date-prefixed: filename starts with 'R2_' (different session naming)
-
-    Args:
-        df         : mapping DataFrame with column 'raw_path'
-        split_name : "Train" or "Test" — used only for display
-
-    Returns:
-        dict with keys 'normal', 'mnt_mangled', 'r2_prefixed'
+    Returns dict with keys: normal, mnt_mangled, r2_prefixed, junk
     """
     filenames = df["raw_path"].apply(lambda p: p.strip().split("/")[-1])
 
-    n_mnt = int(filenames.str.startswith("_mnt_", na=False).sum())
-    n_r2  = int(filenames.str.startswith("R2_",   na=False).sum())
-    n_normal = len(df) - n_mnt - n_r2
+    n_mnt  = int(filenames.str.startswith("_mnt_", na=False).sum())
+    n_r2   = int(filenames.str.startswith("R2_",   na=False).sum())
+    # Junk rows: the entire value has no '/' so it equals its own "filename"
+    n_junk = int(df["raw_path"].apply(
+        lambda p: len([x for x in p.strip().split("/") if x]) < 2
+    ).sum())
+    n_normal = len(df) - n_mnt - n_r2 - n_junk
 
     print(f"{split_name} — Format A (normal)       : {n_normal:>7,}")
     print(f"{split_name} — Format B (_mnt_ mangled): {n_mnt:>7,}")
     print(f"{split_name} — Format C (R2-prefixed)  : {n_r2:>7,}")
+    print(f"{split_name} — Junk / unparseable rows : {n_junk:>7,}")
 
-    return {"normal": n_normal, "mnt_mangled": n_mnt, "r2_prefixed": n_r2}
+    return {
+        "normal":      n_normal,
+        "mnt_mangled": n_mnt,
+        "r2_prefixed": n_r2,
+        "junk":        n_junk,
+    }
 
 
 if __name__ == "__main__":
@@ -168,8 +183,14 @@ if __name__ == "__main__":
     section("First 5 rows of Test CSV")
     print(test_raw.head(5).to_string(index=True))
 
-    # ── Path format breakdown ──────────────────────────────────────────────────
     section("Path format inspection")
     train_fmt = inspect_path_formats(train_raw, "Train")
     print()
     test_fmt  = inspect_path_formats(test_raw,  "Test")
+
+    # ── Guard smoke-test ───────────────────────────────────────────────────────
+    section("Guard smoke-test (junk row)")
+    junk_result = resolve_path("fold_1")
+    print(f"  Input : 'fold_1'")
+    print(f"  Output: {junk_result}")
+    print(f"  Exists: {junk_result.exists()}  (expected False)")
