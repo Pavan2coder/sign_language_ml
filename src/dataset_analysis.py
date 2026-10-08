@@ -274,12 +274,12 @@ def compare_class_sets(train: pd.DataFrame, test: pd.DataFrame) -> dict:
 
     if train_only:
         preview = ", ".join(train_only[:10])
-        suffix  = f" … and {len(train_only) - 10} more" if len(train_only) > 10 else ""
+        suffix  = f" ... and {len(train_only) - 10} more" if len(train_only) > 10 else ""
         print(f"\n  Train-only labels (first 10): {preview}{suffix}")
 
     if test_only:
         preview = ", ".join(test_only[:10])
-        suffix  = f" … and {len(test_only) - 10} more" if len(test_only) > 10 else ""
+        suffix  = f" ... and {len(test_only) - 10} more" if len(test_only) > 10 else ""
         print(f"\n  [WARNING] Test-only labels (first 10): {preview}{suffix}")
         print("  These classes appear in TEST but not TRAIN — model will never")
         print("  have learned them, leading to poor evaluation accuracy.")
@@ -300,39 +300,17 @@ def compare_class_sets(train: pd.DataFrame, test: pd.DataFrame) -> dict:
 
 def check_duplicates_and_leakage(train: pd.DataFrame, test: pd.DataFrame) -> dict:
     """
-    Three integrity checks in one function:
+    Three integrity checks: duplicate rows, junk fold-header artefacts,
+    and train/test path overlap (data leakage).
 
-    1. Duplicate raw_path rows within train
-    2. Duplicate raw_path rows within test
-    3. Junk header rows (values like 'fold_1', 'fold_3', 'fold_4')
-       These appear when multiple per-fold CSVs were naively concatenated —
-       the header line of each chunk became a data row.
-       They are not real file paths and must not be fed to the model.
-    4. Train/test path overlap (data leakage)
-       If the same resolved local_path appears in BOTH splits the model
-       could memorise individual clips rather than generalising.
-       This should be zero in a correctly constructed split.
-
-    Args:
-        train : enriched train DataFrame
-        test  : enriched test DataFrame
-
-    Returns:
-        dict with keys:
-            train_dupes, test_dupes      — int counts of duplicate raw_path rows
-            train_junk,  test_junk       — int counts of fold_* header artefacts
-            junk_values_train            — list of the actual junk strings found
-            path_overlap                 — int count of paths in both splits
+    Returns dict with counts and lists of offending values.
     """
-    # ── 1 & 2: Duplicate raw_path rows ────────────────────────────────────────
     train_dupes = int(train["raw_path"].duplicated().sum())
     test_dupes  = int(test["raw_path"].duplicated().sum())
 
     print(f"Duplicate rows in Train CSV : {train_dupes}")
     print(f"Duplicate rows in Test  CSV : {test_dupes}")
 
-    # ── 3: Junk fold-header artefacts ─────────────────────────────────────────
-    # These rows have no '/' so resolve_path() placed them under __UNPARSEABLE__
     train_junk_mask = train["raw_path"].str.startswith("fold_", na=False)
     test_junk_mask  = test["raw_path"].str.startswith("fold_", na=False)
 
@@ -345,13 +323,8 @@ def check_duplicates_and_leakage(train: pd.DataFrame, test: pd.DataFrame) -> dic
     if train_junk:
         print(f"  Values: {train.loc[train_junk_mask, 'raw_path'].tolist()}")
         print("  (These are CSV header artefacts, not file paths.)")
-
     print(f"Embedded fold-header rows in Test  : {test_junk}")
-    if test_junk:
-        print(f"  Values: {test.loc[test_junk_mask, 'raw_path'].tolist()}")
 
-    # ── 4: Train/test path overlap (data leakage check) ───────────────────────
-    # Compare resolved local paths (strings) so both formats map to the same key
     train_paths = set(train["local_path"].astype(str))
     test_paths  = set(test["local_path"].astype(str))
     overlap     = train_paths & test_paths
@@ -366,21 +339,184 @@ def check_duplicates_and_leakage(train: pd.DataFrame, test: pd.DataFrame) -> dic
         print("  No train/test path overlap — splits are clean.")
 
     return {
-        "train_dupes":        train_dupes,
-        "test_dupes":         test_dupes,
-        "train_junk":         train_junk,
-        "test_junk":          test_junk,
-        "junk_values_train":  junk_vals,
-        "path_overlap":       n_overlap,
+        "train_dupes":       train_dupes,
+        "test_dupes":        test_dupes,
+        "train_junk":        train_junk,
+        "test_junk":         test_junk,
+        "junk_values_train": junk_vals,
+        "path_overlap":      n_overlap,
     }
 
 
-if __name__ == "__main__":
+# ── STEP 10: Write the full analysis report to disk ───────────────────────────
+
+def write_report(
+    train_raw:    pd.DataFrame,
+    test_raw:     pd.DataFrame,
+    train_fmt:    dict,
+    test_fmt:     dict,
+    train_stats:  dict,
+    test_stats:   dict,
+    label_stats:  dict,
+    class_comp:   dict,
+    integrity:    dict,
+) -> Path:
+    """
+    Assemble all analysis results into a single human-readable text file
+    and save it to REPORT_DIR/dataset_analysis.txt.
+
+    Args:
+        All dicts returned by the analysis functions above.
+
+    Returns:
+        Path to the saved report file.
+
+    Why a text report?
+    ------------------
+    A plain-text file is easy to open anywhere, version-control friendly
+    (git tracks changes line-by-line), and can be read without Python.
+    It serves as a permanent record of what the dataset looked like before
+    any preprocessing or training.
+    """
+    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    report_path = REPORT_DIR / "dataset_analysis.txt"
+
+    lines = []
+
+    # ── helpers ───────────────────────────────────────────────────────────────
+    def h(title: str) -> None:
+        lines.append("")
+        lines.append("=" * 70)
+        lines.append(f"  {title}")
+        lines.append("=" * 70)
+
+    def kv(key: str, value) -> None:
+        lines.append(f"  {key:<42}: {value}")
+
+    # ── header ────────────────────────────────────────────────────────────────
+    h("ISL Sign Language Dataset Analysis Report — STEP 1")
+    lines.append(f"  Train CSV    : {TRAIN_CSV}")
+    lines.append(f"  Test  CSV    : {TEST_CSV}")
+    lines.append(f"  MediaPipe    : {MEDIAPIPE_ROOT}")
+    lines.append(f"  Report dir   : {REPORT_DIR}")
+
+    # ── CSV metadata ──────────────────────────────────────────────────────────
+    h("CSV Metadata")
+    kv("Train original column",  train_raw.attrs.get("original_col", "?"))
+    kv("Test  original column",  test_raw.attrs.get("original_col", "?"))
+    kv("Train shape",            str(train_raw.shape))
+    kv("Test  shape",            str(test_raw.shape))
+
+    # ── first rows ────────────────────────────────────────────────────────────
+    h("First 5 rows of Train CSV")
+    lines.append(train_raw.head(5).to_string(index=True))
+
+    h("First 5 rows of Test CSV")
+    lines.append(test_raw.head(5).to_string(index=True))
+
+    # ── path format breakdown ─────────────────────────────────────────────────
+    h("Path Format Breakdown")
+    for split_name, fmt in [("Train", train_fmt), ("Test", test_fmt)]:
+        kv(f"{split_name} Format A (normal)",        f"{fmt['normal']:,}")
+        kv(f"{split_name} Format B (_mnt_ mangled)", f"{fmt['mnt_mangled']:,}")
+        kv(f"{split_name} Format C (R2-prefixed)",   f"{fmt['r2_prefixed']:,}")
+        kv(f"{split_name} Junk / unparseable rows",  f"{fmt['junk']:,}")
+
+    # ── file existence ────────────────────────────────────────────────────────
+    h("File Existence Verification")
+    for split_name, stats in [("Train", train_stats), ("Test", test_stats)]:
+        kv(f"{split_name} total entries",  f"{stats['total']:,}")
+        kv(f"{split_name} files FOUND",    f"{stats['found']:,}")
+        kv(f"{split_name} files MISSING",  f"{stats['missing']:,}")
+
+    if train_stats["missing_paths"]:
+        lines.append("")
+        lines.append("  Sample missing TRAIN paths (first 5):")
+        for p in train_stats["missing_paths"][:5]:
+            lines.append(f"    {p}")
+
+    if test_stats["missing_paths"]:
+        lines.append("")
+        lines.append("  Sample missing TEST paths (first 5):")
+        for p in test_stats["missing_paths"][:5]:
+            lines.append(f"    {p}")
+
+    # ── class statistics ──────────────────────────────────────────────────────
+    h("Class / Label Statistics")
+    kv("Unique classes in Train",   label_stats["n_unique_train"])
+    kv("Unique classes in Test",    label_stats["n_unique_test"])
+    kv("Overall unique classes",    label_stats["n_unique_all"])
+    lines.append("")
+    kv("Train min  samples/class",  label_stats["train_min"])
+    kv("Train max  samples/class",  label_stats["train_max"])
+    kv("Train mean samples/class",  f"{label_stats['train_mean']:.1f}")
+    kv("Test  min  samples/class",  label_stats["test_min"])
+    kv("Test  max  samples/class",  label_stats["test_max"])
+    kv("Test  mean samples/class",  f"{label_stats['test_mean']:.1f}")
+
+    h("Top 20 Classes by Train Sample Count")
+    lines.append(label_stats["top_n_str"])
+
+    h("Full Label Distribution (all classes, combined train+test, sorted by count)")
+    lines.append(f"  {'Label':<40} {'Combined':>8}")
+    lines.append(f"  {'-'*40} {'-'*8}")
+    for label, cnt in label_stats["all_counts"].items():
+        lines.append(f"  {label:<40} {cnt:>8,}")
+
+    # ── class set comparison ──────────────────────────────────────────────────
+    h("Train vs Test Class Set Comparison")
+    kv("Classes in BOTH splits",   class_comp["n_common"])
+    kv("Classes in TRAIN only",    class_comp["n_train_only"])
+    kv("Classes in TEST only",     class_comp["n_test_only"])
+
+    if class_comp["train_only"]:
+        lines.append("")
+        lines.append("  Train-only labels:")
+        lines.append("    " + ", ".join(class_comp["train_only"]))
+
+    if class_comp["test_only"]:
+        lines.append("")
+        lines.append("  [WARNING] Test-only labels (model will not have seen these):")
+        lines.append("    " + ", ".join(class_comp["test_only"]))
+
+    # ── integrity checks ──────────────────────────────────────────────────────
+    h("Integrity Checks (Duplicates, Junk Rows, Data Leakage)")
+    kv("Duplicate rows in Train CSV",        integrity["train_dupes"])
+    kv("Duplicate rows in Test  CSV",        integrity["test_dupes"])
+    kv("Embedded fold-header rows in Train", integrity["train_junk"])
+    kv("Embedded fold-header rows in Test",  integrity["test_junk"])
+    kv("Paths in BOTH splits (leakage)",     integrity["path_overlap"])
+
+    if integrity["junk_values_train"]:
+        lines.append("")
+        lines.append("  Junk fold-header values found in Train:")
+        lines.append("    " + ", ".join(integrity["junk_values_train"]))
+
+    # ── footer ────────────────────────────────────────────────────────────────
+    lines.append("")
+    lines.append("=" * 70)
+    lines.append("  END OF REPORT")
+    lines.append("=" * 70)
+
+    report_path.write_text("\n".join(lines), encoding="utf-8")
+    return report_path
+
+
+# ── Main: wire all steps together ─────────────────────────────────────────────
+
+def run_analysis() -> None:
+    """
+    Run the complete STEP 1 dataset analysis end-to-end.
+
+    Calls every analysis function in order, prints results to the console,
+    then saves the full report to reports/dataset_analysis.txt.
+    """
     section("ISL Dataset Analysis — STEP 1")
     print("MediaPipe root :", MEDIAPIPE_ROOT)
     print("Train CSV      :", TRAIN_CSV)
     print("Test  CSV      :", TEST_CSV)
 
+    # 1. Load CSVs
     section("Loading mapping CSVs")
     train_raw = load_mapping_csv(TRAIN_CSV)
     test_raw  = load_mapping_csv(TEST_CSV)
@@ -393,27 +529,64 @@ if __name__ == "__main__":
     section("First 5 rows of Test CSV")
     print(test_raw.head(5).to_string(index=True))
 
+    # 2. Path format inspection
     section("Path format inspection")
     train_fmt = inspect_path_formats(train_raw, "Train")
     print()
     test_fmt  = inspect_path_formats(test_raw,  "Test")
 
+    # 3. Enrich (resolve paths, stat-check existence, extract labels)
     section("Enriching DataFrames (resolving paths, checking existence, extracting labels)")
-    print("(Stat-checking ~87,000 file paths — takes a few seconds…)")
+    print("(Stat-checking ~87,000 file paths — takes a few seconds...)")
     train = enrich_dataframe(train_raw)
     test  = enrich_dataframe(test_raw)
 
+    # 4. File existence report
     section("File existence verification")
     train_stats = verify_files(train, "Train")
     print()
     test_stats  = verify_files(test,  "Test")
 
+    # 5. Class statistics
     section("Class / label statistics")
     label_stats = class_statistics(train, test)
 
+    # 6. Train vs test class set comparison
     section("Train vs Test class set comparison")
     class_comp = compare_class_sets(train, test)
 
-    # ── Duplicate and leakage checks ──────────────────────────────────────────
+    # 7. Integrity checks
     section("Duplicate and data-leakage checks")
     integrity = check_duplicates_and_leakage(train, test)
+
+    # 8. Save report
+    section("Saving analysis report")
+    report_path = write_report(
+        train_raw   = train_raw,
+        test_raw    = test_raw,
+        train_fmt   = train_fmt,
+        test_fmt    = test_fmt,
+        train_stats = train_stats,
+        test_stats  = test_stats,
+        label_stats = label_stats,
+        class_comp  = class_comp,
+        integrity   = integrity,
+    )
+    print(f"[OK] Report saved to: {report_path}")
+
+    # 9. Summary
+    section("Done — Summary")
+    print(
+        f"  Train : {train_stats['found']:,} / {train_stats['total']:,} files found"
+        f"  ({train_stats['missing']:,} missing)"
+    )
+    print(
+        f"  Test  : {test_stats['found']:,} / {test_stats['total']:,} files found"
+        f"  ({test_stats['missing']:,} missing)"
+    )
+    print(f"  Total unique classes : {label_stats['n_unique_all']}")
+    print(f"  No data leakage      : {integrity['path_overlap'] == 0}")
+
+
+if __name__ == "__main__":
+    run_analysis()
