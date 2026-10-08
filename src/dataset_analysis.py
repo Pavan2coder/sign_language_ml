@@ -156,40 +156,60 @@ def extract_label(filename: str) -> str:
 
 def enrich_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Add three computed columns to a mapping DataFrame.
-
-    Columns added
-    -------------
-    local_path  : pathlib.Path
-        The resolved Windows path where the .h5 file should be.
-        Built by resolve_path() — no H5 data is loaded.
-
-    file_exists : bool
-        True if the .h5 file is actually present on disk.
-        Uses Path.exists() which is a fast stat() call — no file reading.
-
-    label : str
-        The gesture / class label derived from the resolved filename
-        by extract_label().
-
-    Why copy() first?
-        pandas warns if you assign to a slice of an existing DataFrame.
-        Working on a copy keeps things clean and explicit.
+    Add local_path, file_exists, and label columns.
+    No H5 data is loaded — only path resolution and stat checks.
     """
     df = df.copy()
-
-    # 1. Resolve every raw CSV path to its local Windows equivalent
-    df["local_path"] = df["raw_path"].apply(resolve_path)
-
-    # 2. Stat-check: does each file actually exist on disk?
-    #    Path.exists() is used — it does NOT open or read the file.
+    df["local_path"]  = df["raw_path"].apply(resolve_path)
     df["file_exists"] = df["local_path"].apply(lambda p: p.exists())
-
-    # 3. Derive the gesture label from the resolved filename
-    #    (use local_path.name so mangled filenames are already decoded)
-    df["label"] = df["local_path"].apply(lambda p: extract_label(p.name))
-
+    df["label"]       = df["local_path"].apply(lambda p: extract_label(p.name))
     return df
+
+
+# ── STEP 6: File existence verification ───────────────────────────────────────
+
+def verify_files(df: pd.DataFrame, split_name: str, n_samples: int = 5) -> dict:
+    """
+    Report how many .h5 files exist on disk vs how many are missing.
+
+    Args:
+        df         : enriched DataFrame (must have 'local_path' and 'file_exists')
+        split_name : "Train" or "Test" — used for display only
+        n_samples  : how many missing paths to print as examples (default 5)
+
+    Returns:
+        dict with keys: total, found, missing, missing_paths (list of str)
+
+    Why files go missing
+    --------------------
+    The CSVs were generated on a Linux server with the full original dataset.
+    When the dataset was copied locally not every clip was included.
+    Additionally, the _mnt_-mangled entries encode filenames that were stored
+    on an NFS mount; some of those clips may not have been exported at all.
+    Missing files are NOT errors in this script — they are real data gaps
+    that must be accounted for before training.
+    """
+    total   = len(df)
+    found   = int(df["file_exists"].sum())
+    missing = total - found
+
+    print(f"{split_name} — total entries : {total:>7,}")
+    print(f"{split_name} — files FOUND   : {found:>7,}")
+    print(f"{split_name} — files MISSING : {missing:>7,}")
+
+    # Show a sample of the missing paths so the user can investigate
+    missing_paths = df.loc[~df["file_exists"], "local_path"].tolist()
+    if missing_paths:
+        print(f"\n  First {n_samples} missing {split_name} paths:")
+        for p in missing_paths[:n_samples]:
+            print(f"    {p}")
+
+    return {
+        "total":         total,
+        "found":         found,
+        "missing":       missing,
+        "missing_paths": [str(p) for p in missing_paths],
+    }
 
 
 if __name__ == "__main__":
@@ -215,15 +235,13 @@ if __name__ == "__main__":
     print()
     test_fmt  = inspect_path_formats(test_raw,  "Test")
 
-    # ── Enrich both DataFrames ─────────────────────────────────────────────────
     section("Enriching DataFrames (resolving paths, checking existence, extracting labels)")
     print("(Stat-checking ~87,000 file paths — takes a few seconds…)")
-
     train = enrich_dataframe(train_raw)
     test  = enrich_dataframe(test_raw)
 
-    section("Enriched Train DataFrame — first 5 rows")
-    print(train[["raw_path", "local_path", "file_exists", "label"]].head(5).to_string(index=True))
-
-    section("Enriched Test DataFrame — first 5 rows")
-    print(test[["raw_path", "local_path", "file_exists", "label"]].head(5).to_string(index=True))
+    # ── File existence verification ────────────────────────────────────────────
+    section("File existence verification")
+    train_stats = verify_files(train, "Train")
+    print()
+    test_stats  = verify_files(test,  "Test")
