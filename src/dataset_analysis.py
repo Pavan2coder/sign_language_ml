@@ -172,22 +172,7 @@ def verify_files(df: pd.DataFrame, split_name: str, n_samples: int = 5) -> dict:
     """
     Report how many .h5 files exist on disk vs how many are missing.
 
-    Args:
-        df         : enriched DataFrame (must have 'local_path' and 'file_exists')
-        split_name : "Train" or "Test" — used for display only
-        n_samples  : how many missing paths to print as examples (default 5)
-
-    Returns:
-        dict with keys: total, found, missing, missing_paths (list of str)
-
-    Why files go missing
-    --------------------
-    The CSVs were generated on a Linux server with the full original dataset.
-    When the dataset was copied locally not every clip was included.
-    Additionally, the _mnt_-mangled entries encode filenames that were stored
-    on an NFS mount; some of those clips may not have been exported at all.
-    Missing files are NOT errors in this script — they are real data gaps
-    that must be accounted for before training.
+    Returns dict with keys: total, found, missing, missing_paths
     """
     total   = len(df)
     found   = int(df["file_exists"].sum())
@@ -197,7 +182,6 @@ def verify_files(df: pd.DataFrame, split_name: str, n_samples: int = 5) -> dict:
     print(f"{split_name} — files FOUND   : {found:>7,}")
     print(f"{split_name} — files MISSING : {missing:>7,}")
 
-    # Show a sample of the missing paths so the user can investigate
     missing_paths = df.loc[~df["file_exists"], "local_path"].tolist()
     if missing_paths:
         print(f"\n  First {n_samples} missing {split_name} paths:")
@@ -209,6 +193,91 @@ def verify_files(df: pd.DataFrame, split_name: str, n_samples: int = 5) -> dict:
         "found":         found,
         "missing":       missing,
         "missing_paths": [str(p) for p in missing_paths],
+    }
+
+
+# ── STEP 7: Class / label statistics ──────────────────────────────────────────
+
+def class_statistics(train: pd.DataFrame, test: pd.DataFrame, top_n: int = 20) -> dict:
+    """
+    Compute and print class distribution statistics for both splits.
+
+    Metrics reported
+    ----------------
+    unique_train  : number of distinct labels in the train split
+    unique_test   : number of distinct labels in the test split
+    unique_all    : union of both (total vocabulary size)
+    train_min     : fewest samples any single class has in train
+    train_max     : most samples any single class has in train
+    train_mean    : average samples per class in train
+    test_min/max/mean : same metrics for test split
+    top_n         : the top_n classes ranked by train sample count
+
+    Why these metrics matter for ML
+    --------------------------------
+    - A very large gap between min and max (class imbalance) can cause
+      the model to be biased toward frequent classes.
+    - Classes with very few samples (e.g. 1–5) may need to be dropped
+      or augmented before training.
+    - unique_all tells you the number of output neurons your classifier
+      will need (one per class in a softmax layer).
+
+    Args:
+        train  : enriched train DataFrame (must have 'label' column)
+        test   : enriched test DataFrame  (must have 'label' column)
+        top_n  : how many top classes to display (default 20)
+
+    Returns:
+        dict with all computed metrics plus the full label count Series
+    """
+    train_counts = train["label"].value_counts()  # sorted descending by count
+    test_counts  = test["label"].value_counts()
+
+    n_unique_train = int(train["label"].nunique())
+    n_unique_test  = int(test["label"].nunique())
+
+    # Union of both label sets
+    all_labels  = pd.concat([train["label"], test["label"]])
+    all_counts  = all_labels.value_counts()
+    n_unique_all = int(all_counts.shape[0])
+
+    # Per-split distribution stats
+    train_min  = int(train_counts.min())
+    train_max  = int(train_counts.max())
+    train_mean = float(train_counts.mean())
+    test_min   = int(test_counts.min())
+    test_max   = int(test_counts.max())
+    test_mean  = float(test_counts.mean())
+
+    print(f"Unique classes in Train  : {n_unique_train}")
+    print(f"Unique classes in Test   : {n_unique_test}")
+    print(f"Overall unique classes   : {n_unique_all}")
+    print()
+    print(f"Train — min samples/class : {train_min}")
+    print(f"Train — max samples/class : {train_max}")
+    print(f"Train — mean samples/class: {train_mean:.1f}")
+    print()
+    print(f"Test  — min samples/class : {test_min}")
+    print(f"Test  — max samples/class : {test_max}")
+    print(f"Test  — mean samples/class: {test_mean:.1f}")
+    print()
+    print(f"Top {top_n} classes by TRAIN sample count:")
+    print(train_counts.head(top_n).to_string())
+
+    return {
+        "n_unique_train":   n_unique_train,
+        "n_unique_test":    n_unique_test,
+        "n_unique_all":     n_unique_all,
+        "train_min":        train_min,
+        "train_max":        train_max,
+        "train_mean":       train_mean,
+        "test_min":         test_min,
+        "test_max":         test_max,
+        "test_mean":        test_mean,
+        "train_counts":     train_counts,
+        "test_counts":      test_counts,
+        "all_counts":       all_counts,
+        "top_n_str":        train_counts.head(top_n).to_string(),
     }
 
 
@@ -240,8 +309,11 @@ if __name__ == "__main__":
     train = enrich_dataframe(train_raw)
     test  = enrich_dataframe(test_raw)
 
-    # ── File existence verification ────────────────────────────────────────────
     section("File existence verification")
     train_stats = verify_files(train, "Train")
     print()
     test_stats  = verify_files(test,  "Test")
+
+    # ── Class statistics ───────────────────────────────────────────────────────
+    section("Class / label statistics")
+    label_stats = class_statistics(train, test)
