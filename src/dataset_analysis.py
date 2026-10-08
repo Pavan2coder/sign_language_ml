@@ -78,7 +78,6 @@ def load_mapping_csv(csv_path: Path) -> pd.DataFrame:
 
     df = pd.read_csv(csv_path)
 
-    # Store the original column name, then rename to a stable key
     original_col = df.columns[0]
     df = df.rename(columns={original_col: "raw_path"})
 
@@ -86,6 +85,37 @@ def load_mapping_csv(csv_path: Path) -> pd.DataFrame:
     df.attrs["source_file"]  = str(csv_path)
 
     return df
+
+
+# ── STEP 2: Resolve CSV paths → local Windows paths (FORMAT A only) ───────────
+
+def resolve_path(raw_path: str) -> Path:
+    """
+    Convert a raw CSV path (Linux-style, from the original dataset server)
+    to the corresponding local Windows .h5 file path under MEDIAPIPE_ROOT.
+
+    FORMAT A — Normal path (handled in this commit)
+    ------------------------------------------------
+    The CSV stores full Linux paths like:
+        /mnt/<uuid>/popsign/ISL_Goa_Data_h5_30fps/ISL_DATA_USER001/Absent__session82__clip000.h5
+
+    All we need are the last two segments:
+        - second-to-last  → the user directory  (e.g. ISL_DATA_USER001)
+        - last            → the h5 filename      (e.g. Absent__session82__clip000.h5)
+
+    We join those two with MEDIAPIPE_ROOT to get the local Windows path:
+        D:\\ISL-DATA\\Landmarks\\MediaPipe\\ISL_DATA_USER001\\Absent__session82__clip000.h5
+
+    Other path formats (mangled _mnt_, R2-prefixed) will be added in later commits.
+    """
+    # Split on forward slash (POSIX path), drop empty strings from leading slash
+    parts = [p for p in raw_path.strip().split("/") if p]
+
+    # The user directory is always second-to-last, filename is last
+    user_dir     = parts[-2]   # e.g. "ISL_DATA_USER001"
+    raw_filename = parts[-1]   # e.g. "Absent__session82__clip000.h5"
+
+    return MEDIAPIPE_ROOT / user_dir / raw_filename
 
 
 if __name__ == "__main__":
@@ -108,9 +138,14 @@ if __name__ == "__main__":
     print(f"  Shape    : {test_raw.shape}")
     print(f"  Column   : {test_raw.attrs['original_col']}")
 
-    # ── First 5 rows ──────────────────────────────────────────────────────────
     section("First 5 rows of Train CSV")
     print(train_raw.head(5).to_string(index=True))
 
     section("First 5 rows of Test CSV")
     print(test_raw.head(5).to_string(index=True))
+
+    # ── Quick resolver smoke-test ──────────────────────────────────────────────
+    section("Path resolver smoke-test (Format A)")
+    sample = train_raw["raw_path"].iloc[1]   # pick a normal (non-mangled) row
+    print(f"  Raw  : {sample}")
+    print(f"  Local: {resolve_path(sample)}")
