@@ -10,7 +10,7 @@ What this script does (in plain English):
 2. Prints their shapes, column names, and a few sample rows
    so you can see exactly what the raw data looks like.
 3. Figures out how each CSV row maps to a real .h5 file on disk,
-   handling BOTH path formats that appear in the CSVs.
+   handling ALL path formats that appear in the CSVs.
 4. Verifies that every expected .h5 file actually exists locally.
 5. Derives the class label from the filename.
 6. Prints class statistics.
@@ -59,10 +59,8 @@ def load_mapping_csv(csv_path: Path) -> pd.DataFrame:
     """
     Load a mapping CSV into a pandas DataFrame.
 
-    Each CSV has exactly ONE column (e.g. 'fold_0' or 'fold_2') that
-    contains Linux-style absolute paths to .h5 files.  We rename that
-    column to 'raw_path' so the rest of the code has a stable name to
-    work with regardless of which fold the CSV came from.
+    Renames the single fold column to 'raw_path' for a stable accessor.
+    Stores the original column name in df.attrs['original_col'].
     """
     if not csv_path.exists():
         print(f"[ERROR] CSV not found: {csv_path}")
@@ -81,64 +79,73 @@ def load_mapping_csv(csv_path: Path) -> pd.DataFrame:
 
 # ── STEP 2: Resolve CSV paths → local Windows paths ───────────────────────────
 
-# Compiled once at module level for efficiency.
-# Matches the real filename hidden inside a mangled _mnt_ filename.
-#
-# Example mangled filename:
-#   _mnt_9a528fe4-4fe8-4dff-9a0c-8b1a3cf3d7ba_ALL_CLIPS_R2_Clips_R2_user001_Absent__session65__clip028.h5
-#                                                                    ^^^^^^^^
-#   The pattern captures everything after the last  _userNNN_  token.
-#   Captured group(1) → "Absent__session65__clip028.h5"
-_SPECIAL_FILENAME_RE = re.compile(
-    r"_user\d+_(.+\.h5)$",
-    re.IGNORECASE,
-)
+_SPECIAL_FILENAME_RE = re.compile(r"_user\d+_(.+\.h5)$", re.IGNORECASE)
 
 
 def resolve_path(raw_path: str) -> Path:
     """
     Convert a raw CSV path (Linux-style) to the local Windows .h5 path.
 
-    Two formats are handled:
-
     FORMAT A — Normal path
-    ----------------------
-    Raw:
-        /mnt/<uuid>/popsign/.../ISL_DATA_USER001/Absent__session82__clip000.h5
-    Action:
-        Take last two segments (user_dir / filename) and join with MEDIAPIPE_ROOT.
-    Local:
-        D:/ISL-DATA/Landmarks/MediaPipe/ISL_DATA_USER001/Absent__session82__clip000.h5
+        Raw last segment : Absent__session82__clip000.h5
+        Action           : use as-is
 
-    FORMAT B — Mangled _mnt_ path  (added this commit)
-    ---------------------------------------------------
-    Raw:
-        /mnt/<uuid>/popsign/.../ISL_DATA_USER001/_mnt_<uuid>_ALL_CLIPS_R2_Clips_R2_user001_Absent__session65__clip028.h5
-    Action:
-        The user directory (ISL_DATA_USER001) is still second-to-last.
-        The filename is mangled — strip everything up to and including _userNNN_
-        using the compiled regex to recover the real filename.
-    Local:
-        D:/ISL-DATA/Landmarks/MediaPipe/ISL_DATA_USER001/Absent__session65__clip028.h5
+    FORMAT B — Mangled _mnt_ path
+        Raw last segment : _mnt_<uuid>_ALL_CLIPS_R2_Clips_R2_user001_Absent__session65__clip028.h5
+        Action           : strip prefix via regex, recover real filename
+
+    FORMAT C — R2 date-prefixed path  (added this commit)
+        Raw last segment : R2_28.03.26_All_user002_..._Accept__session65__clip002.h5
+        Action           : filename is used as-is (it IS the real disk name);
+                           label extraction handles the R2 prefix separately.
+                           No special path-resolution needed here — it falls
+                           through to the Format A branch naturally.
     """
     parts = [p for p in raw_path.strip().split("/") if p]
 
     user_dir     = parts[-2]
     raw_filename = parts[-1]
 
-    # FORMAT B: filename starts with "_mnt_" — it is mangled
     if raw_filename.startswith("_mnt_"):
+        # FORMAT B — mangled
         match = _SPECIAL_FILENAME_RE.search(raw_filename)
-        if match:
-            real_filename = match.group(1)   # the clean filename hidden inside
-        else:
-            # Regex didn't match — keep original; file will be reported missing
-            real_filename = raw_filename
+        real_filename = match.group(1) if match else raw_filename
     else:
-        # FORMAT A: filename is already clean
+        # FORMAT A and FORMAT C — filename is already the correct disk name
         real_filename = raw_filename
 
     return MEDIAPIPE_ROOT / user_dir / real_filename
+
+
+# ── STEP 3: Inspect path format breakdown ─────────────────────────────────────
+
+def inspect_path_formats(df: pd.DataFrame, split_name: str) -> dict:
+    """
+    Count how many rows use each path format and print a summary.
+
+    Three formats exist in the dataset:
+        A  Normal          : filename starts with a capital letter + label
+        B  _mnt_ mangled   : filename starts with '_mnt_'
+        C  R2 date-prefixed: filename starts with 'R2_' (different session naming)
+
+    Args:
+        df         : mapping DataFrame with column 'raw_path'
+        split_name : "Train" or "Test" — used only for display
+
+    Returns:
+        dict with keys 'normal', 'mnt_mangled', 'r2_prefixed'
+    """
+    filenames = df["raw_path"].apply(lambda p: p.strip().split("/")[-1])
+
+    n_mnt = int(filenames.str.startswith("_mnt_", na=False).sum())
+    n_r2  = int(filenames.str.startswith("R2_",   na=False).sum())
+    n_normal = len(df) - n_mnt - n_r2
+
+    print(f"{split_name} — Format A (normal)       : {n_normal:>7,}")
+    print(f"{split_name} — Format B (_mnt_ mangled): {n_mnt:>7,}")
+    print(f"{split_name} — Format C (R2-prefixed)  : {n_r2:>7,}")
+
+    return {"normal": n_normal, "mnt_mangled": n_mnt, "r2_prefixed": n_r2}
 
 
 if __name__ == "__main__":
@@ -152,13 +159,8 @@ if __name__ == "__main__":
     train_raw = load_mapping_csv(TRAIN_CSV)
     test_raw  = load_mapping_csv(TEST_CSV)
 
-    print(f"Train CSV  : {TRAIN_CSV}")
-    print(f"  Shape    : {train_raw.shape}")
-    print(f"  Column   : {train_raw.attrs['original_col']}")
-    print()
-    print(f"Test CSV   : {TEST_CSV}")
-    print(f"  Shape    : {test_raw.shape}")
-    print(f"  Column   : {test_raw.attrs['original_col']}")
+    print(f"Train  shape : {train_raw.shape}  |  column: {train_raw.attrs['original_col']}")
+    print(f"Test   shape : {test_raw.shape}   |  column: {test_raw.attrs['original_col']}")
 
     section("First 5 rows of Train CSV")
     print(train_raw.head(5).to_string(index=True))
@@ -166,16 +168,8 @@ if __name__ == "__main__":
     section("First 5 rows of Test CSV")
     print(test_raw.head(5).to_string(index=True))
 
-    # ── Resolver smoke-test: both formats ─────────────────────────────────────
-    section("Path resolver smoke-test (Format A and B)")
-
-    normal_sample  = train_raw["raw_path"].iloc[1]   # clean path
-    mangled_sample = train_raw["raw_path"].iloc[0]   # _mnt_ mangled path
-
-    print("Format A (normal):")
-    print(f"  Raw  : {normal_sample}")
-    print(f"  Local: {resolve_path(normal_sample)}")
+    # ── Path format breakdown ──────────────────────────────────────────────────
+    section("Path format inspection")
+    train_fmt = inspect_path_formats(train_raw, "Train")
     print()
-    print("Format B (_mnt_ mangled):")
-    print(f"  Raw  : {mangled_sample}")
-    print(f"  Local: {resolve_path(mangled_sample)}")
+    test_fmt  = inspect_path_formats(test_raw,  "Test")
