@@ -63,14 +63,6 @@ def load_mapping_csv(csv_path: Path) -> pd.DataFrame:
     contains Linux-style absolute paths to .h5 files.  We rename that
     column to 'raw_path' so the rest of the code has a stable name to
     work with regardless of which fold the CSV came from.
-
-    Args:
-        csv_path: Path to the CSV file.
-
-    Returns:
-        DataFrame with column 'raw_path' and two metadata attrs:
-            original_col  – the original column name
-            source_file   – the CSV file path as a string
     """
     if not csv_path.exists():
         print(f"[ERROR] CSV not found: {csv_path}")
@@ -87,35 +79,66 @@ def load_mapping_csv(csv_path: Path) -> pd.DataFrame:
     return df
 
 
-# ── STEP 2: Resolve CSV paths → local Windows paths (FORMAT A only) ───────────
+# ── STEP 2: Resolve CSV paths → local Windows paths ───────────────────────────
+
+# Compiled once at module level for efficiency.
+# Matches the real filename hidden inside a mangled _mnt_ filename.
+#
+# Example mangled filename:
+#   _mnt_9a528fe4-4fe8-4dff-9a0c-8b1a3cf3d7ba_ALL_CLIPS_R2_Clips_R2_user001_Absent__session65__clip028.h5
+#                                                                    ^^^^^^^^
+#   The pattern captures everything after the last  _userNNN_  token.
+#   Captured group(1) → "Absent__session65__clip028.h5"
+_SPECIAL_FILENAME_RE = re.compile(
+    r"_user\d+_(.+\.h5)$",
+    re.IGNORECASE,
+)
+
 
 def resolve_path(raw_path: str) -> Path:
     """
-    Convert a raw CSV path (Linux-style, from the original dataset server)
-    to the corresponding local Windows .h5 file path under MEDIAPIPE_ROOT.
+    Convert a raw CSV path (Linux-style) to the local Windows .h5 path.
 
-    FORMAT A — Normal path (handled in this commit)
-    ------------------------------------------------
-    The CSV stores full Linux paths like:
-        /mnt/<uuid>/popsign/ISL_Goa_Data_h5_30fps/ISL_DATA_USER001/Absent__session82__clip000.h5
+    Two formats are handled:
 
-    All we need are the last two segments:
-        - second-to-last  → the user directory  (e.g. ISL_DATA_USER001)
-        - last            → the h5 filename      (e.g. Absent__session82__clip000.h5)
+    FORMAT A — Normal path
+    ----------------------
+    Raw:
+        /mnt/<uuid>/popsign/.../ISL_DATA_USER001/Absent__session82__clip000.h5
+    Action:
+        Take last two segments (user_dir / filename) and join with MEDIAPIPE_ROOT.
+    Local:
+        D:/ISL-DATA/Landmarks/MediaPipe/ISL_DATA_USER001/Absent__session82__clip000.h5
 
-    We join those two with MEDIAPIPE_ROOT to get the local Windows path:
-        D:\\ISL-DATA\\Landmarks\\MediaPipe\\ISL_DATA_USER001\\Absent__session82__clip000.h5
-
-    Other path formats (mangled _mnt_, R2-prefixed) will be added in later commits.
+    FORMAT B — Mangled _mnt_ path  (added this commit)
+    ---------------------------------------------------
+    Raw:
+        /mnt/<uuid>/popsign/.../ISL_DATA_USER001/_mnt_<uuid>_ALL_CLIPS_R2_Clips_R2_user001_Absent__session65__clip028.h5
+    Action:
+        The user directory (ISL_DATA_USER001) is still second-to-last.
+        The filename is mangled — strip everything up to and including _userNNN_
+        using the compiled regex to recover the real filename.
+    Local:
+        D:/ISL-DATA/Landmarks/MediaPipe/ISL_DATA_USER001/Absent__session65__clip028.h5
     """
-    # Split on forward slash (POSIX path), drop empty strings from leading slash
     parts = [p for p in raw_path.strip().split("/") if p]
 
-    # The user directory is always second-to-last, filename is last
-    user_dir     = parts[-2]   # e.g. "ISL_DATA_USER001"
-    raw_filename = parts[-1]   # e.g. "Absent__session82__clip000.h5"
+    user_dir     = parts[-2]
+    raw_filename = parts[-1]
 
-    return MEDIAPIPE_ROOT / user_dir / raw_filename
+    # FORMAT B: filename starts with "_mnt_" — it is mangled
+    if raw_filename.startswith("_mnt_"):
+        match = _SPECIAL_FILENAME_RE.search(raw_filename)
+        if match:
+            real_filename = match.group(1)   # the clean filename hidden inside
+        else:
+            # Regex didn't match — keep original; file will be reported missing
+            real_filename = raw_filename
+    else:
+        # FORMAT A: filename is already clean
+        real_filename = raw_filename
+
+    return MEDIAPIPE_ROOT / user_dir / real_filename
 
 
 if __name__ == "__main__":
@@ -124,7 +147,6 @@ if __name__ == "__main__":
     print("Train CSV      :", TRAIN_CSV)
     print("Test  CSV      :", TEST_CSV)
 
-    # ── Load ──────────────────────────────────────────────────────────────────
     section("Loading mapping CSVs")
 
     train_raw = load_mapping_csv(TRAIN_CSV)
@@ -144,8 +166,16 @@ if __name__ == "__main__":
     section("First 5 rows of Test CSV")
     print(test_raw.head(5).to_string(index=True))
 
-    # ── Quick resolver smoke-test ──────────────────────────────────────────────
-    section("Path resolver smoke-test (Format A)")
-    sample = train_raw["raw_path"].iloc[1]   # pick a normal (non-mangled) row
-    print(f"  Raw  : {sample}")
-    print(f"  Local: {resolve_path(sample)}")
+    # ── Resolver smoke-test: both formats ─────────────────────────────────────
+    section("Path resolver smoke-test (Format A and B)")
+
+    normal_sample  = train_raw["raw_path"].iloc[1]   # clean path
+    mangled_sample = train_raw["raw_path"].iloc[0]   # _mnt_ mangled path
+
+    print("Format A (normal):")
+    print(f"  Raw  : {normal_sample}")
+    print(f"  Local: {resolve_path(normal_sample)}")
+    print()
+    print("Format B (_mnt_ mangled):")
+    print(f"  Raw  : {mangled_sample}")
+    print(f"  Local: {resolve_path(mangled_sample)}")
