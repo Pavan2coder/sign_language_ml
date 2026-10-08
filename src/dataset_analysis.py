@@ -202,46 +202,18 @@ def class_statistics(train: pd.DataFrame, test: pd.DataFrame, top_n: int = 20) -
     """
     Compute and print class distribution statistics for both splits.
 
-    Metrics reported
-    ----------------
-    unique_train  : number of distinct labels in the train split
-    unique_test   : number of distinct labels in the test split
-    unique_all    : union of both (total vocabulary size)
-    train_min     : fewest samples any single class has in train
-    train_max     : most samples any single class has in train
-    train_mean    : average samples per class in train
-    test_min/max/mean : same metrics for test split
-    top_n         : the top_n classes ranked by train sample count
-
-    Why these metrics matter for ML
-    --------------------------------
-    - A very large gap between min and max (class imbalance) can cause
-      the model to be biased toward frequent classes.
-    - Classes with very few samples (e.g. 1–5) may need to be dropped
-      or augmented before training.
-    - unique_all tells you the number of output neurons your classifier
-      will need (one per class in a softmax layer).
-
-    Args:
-        train  : enriched train DataFrame (must have 'label' column)
-        test   : enriched test DataFrame  (must have 'label' column)
-        top_n  : how many top classes to display (default 20)
-
-    Returns:
-        dict with all computed metrics plus the full label count Series
+    Returns dict with all metrics and the full label count Series objects.
     """
-    train_counts = train["label"].value_counts()  # sorted descending by count
+    train_counts = train["label"].value_counts()
     test_counts  = test["label"].value_counts()
 
     n_unique_train = int(train["label"].nunique())
     n_unique_test  = int(test["label"].nunique())
 
-    # Union of both label sets
-    all_labels  = pd.concat([train["label"], test["label"]])
-    all_counts  = all_labels.value_counts()
+    all_labels   = pd.concat([train["label"], test["label"]])
+    all_counts   = all_labels.value_counts()
     n_unique_all = int(all_counts.shape[0])
 
-    # Per-split distribution stats
     train_min  = int(train_counts.min())
     train_max  = int(train_counts.max())
     train_mean = float(train_counts.mean())
@@ -265,19 +237,86 @@ def class_statistics(train: pd.DataFrame, test: pd.DataFrame, top_n: int = 20) -
     print(train_counts.head(top_n).to_string())
 
     return {
-        "n_unique_train":   n_unique_train,
-        "n_unique_test":    n_unique_test,
-        "n_unique_all":     n_unique_all,
-        "train_min":        train_min,
-        "train_max":        train_max,
-        "train_mean":       train_mean,
-        "test_min":         test_min,
-        "test_max":         test_max,
-        "test_mean":        test_mean,
-        "train_counts":     train_counts,
-        "test_counts":      test_counts,
-        "all_counts":       all_counts,
-        "top_n_str":        train_counts.head(top_n).to_string(),
+        "n_unique_train": n_unique_train,
+        "n_unique_test":  n_unique_test,
+        "n_unique_all":   n_unique_all,
+        "train_min":      train_min,
+        "train_max":      train_max,
+        "train_mean":     train_mean,
+        "test_min":       test_min,
+        "test_max":       test_max,
+        "test_mean":      test_mean,
+        "train_counts":   train_counts,
+        "test_counts":    test_counts,
+        "all_counts":     all_counts,
+        "top_n_str":      train_counts.head(top_n).to_string(),
+    }
+
+
+# ── STEP 8: Train vs Test class set comparison ────────────────────────────────
+
+def compare_class_sets(train: pd.DataFrame, test: pd.DataFrame) -> dict:
+    """
+    Compare which classes appear in train, test, or both.
+
+    Why this check matters
+    ----------------------
+    A well-formed supervised split should have every class present in
+    BOTH train and test so the model is evaluated on classes it has
+    seen during training.
+
+    Classes in TRAIN only  → the model will be trained on these but
+                             never evaluated on them.  Not a disaster,
+                             but worth knowing.
+
+    Classes in TEST only   → the model will be evaluated on classes it
+                             has NEVER seen during training.  This would
+                             give artificially low accuracy and should be
+                             investigated or corrected before training.
+
+    Args:
+        train : enriched train DataFrame (must have 'label' column)
+        test  : enriched test DataFrame  (must have 'label' column)
+
+    Returns:
+        dict with keys:
+            train_only  — sorted list of labels only in train
+            test_only   — sorted list of labels only in test
+            common      — sorted list of labels in both
+            n_train_only, n_test_only, n_common — counts
+    """
+    train_classes = set(train["label"].unique())
+    test_classes  = set(test["label"].unique())
+
+    train_only = sorted(train_classes - test_classes)
+    test_only  = sorted(test_classes  - train_classes)
+    common     = sorted(train_classes & test_classes)
+
+    print(f"Classes in BOTH splits   : {len(common):>5}")
+    print(f"Classes in TRAIN only    : {len(train_only):>5}")
+    print(f"Classes in TEST only     : {len(test_only):>5}")
+
+    if train_only:
+        preview = ", ".join(train_only[:10])
+        suffix  = f" … and {len(train_only) - 10} more" if len(train_only) > 10 else ""
+        print(f"\n  Train-only labels (first 10): {preview}{suffix}")
+
+    if test_only:
+        preview = ", ".join(test_only[:10])
+        suffix  = f" … and {len(test_only) - 10} more" if len(test_only) > 10 else ""
+        print(f"\n  [WARNING] Test-only labels (first 10): {preview}{suffix}")
+        print("  These classes appear in TEST but not TRAIN — model will never")
+        print("  have learned them, leading to poor evaluation accuracy.")
+    else:
+        print("\n  No test-only classes — every test class also appears in train. Good.")
+
+    return {
+        "train_only":   train_only,
+        "test_only":    test_only,
+        "common":       common,
+        "n_train_only": len(train_only),
+        "n_test_only":  len(test_only),
+        "n_common":     len(common),
     }
 
 
@@ -314,6 +353,9 @@ if __name__ == "__main__":
     print()
     test_stats  = verify_files(test,  "Test")
 
-    # ── Class statistics ───────────────────────────────────────────────────────
     section("Class / label statistics")
     label_stats = class_statistics(train, test)
+
+    # ── Train vs Test class comparison ────────────────────────────────────────
+    section("Train vs Test class set comparison")
+    class_comp = compare_class_sets(train, test)
