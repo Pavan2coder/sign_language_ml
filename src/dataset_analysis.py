@@ -259,31 +259,7 @@ def compare_class_sets(train: pd.DataFrame, test: pd.DataFrame) -> dict:
     """
     Compare which classes appear in train, test, or both.
 
-    Why this check matters
-    ----------------------
-    A well-formed supervised split should have every class present in
-    BOTH train and test so the model is evaluated on classes it has
-    seen during training.
-
-    Classes in TRAIN only  → the model will be trained on these but
-                             never evaluated on them.  Not a disaster,
-                             but worth knowing.
-
-    Classes in TEST only   → the model will be evaluated on classes it
-                             has NEVER seen during training.  This would
-                             give artificially low accuracy and should be
-                             investigated or corrected before training.
-
-    Args:
-        train : enriched train DataFrame (must have 'label' column)
-        test  : enriched test DataFrame  (must have 'label' column)
-
-    Returns:
-        dict with keys:
-            train_only  — sorted list of labels only in train
-            test_only   — sorted list of labels only in test
-            common      — sorted list of labels in both
-            n_train_only, n_test_only, n_common — counts
+    Returns dict with train_only, test_only, common lists and counts.
     """
     train_classes = set(train["label"].unique())
     test_classes  = set(test["label"].unique())
@@ -317,6 +293,85 @@ def compare_class_sets(train: pd.DataFrame, test: pd.DataFrame) -> dict:
         "n_train_only": len(train_only),
         "n_test_only":  len(test_only),
         "n_common":     len(common),
+    }
+
+
+# ── STEP 9: Duplicate and junk row detection ──────────────────────────────────
+
+def check_duplicates_and_leakage(train: pd.DataFrame, test: pd.DataFrame) -> dict:
+    """
+    Three integrity checks in one function:
+
+    1. Duplicate raw_path rows within train
+    2. Duplicate raw_path rows within test
+    3. Junk header rows (values like 'fold_1', 'fold_3', 'fold_4')
+       These appear when multiple per-fold CSVs were naively concatenated —
+       the header line of each chunk became a data row.
+       They are not real file paths and must not be fed to the model.
+    4. Train/test path overlap (data leakage)
+       If the same resolved local_path appears in BOTH splits the model
+       could memorise individual clips rather than generalising.
+       This should be zero in a correctly constructed split.
+
+    Args:
+        train : enriched train DataFrame
+        test  : enriched test DataFrame
+
+    Returns:
+        dict with keys:
+            train_dupes, test_dupes      — int counts of duplicate raw_path rows
+            train_junk,  test_junk       — int counts of fold_* header artefacts
+            junk_values_train            — list of the actual junk strings found
+            path_overlap                 — int count of paths in both splits
+    """
+    # ── 1 & 2: Duplicate raw_path rows ────────────────────────────────────────
+    train_dupes = int(train["raw_path"].duplicated().sum())
+    test_dupes  = int(test["raw_path"].duplicated().sum())
+
+    print(f"Duplicate rows in Train CSV : {train_dupes}")
+    print(f"Duplicate rows in Test  CSV : {test_dupes}")
+
+    # ── 3: Junk fold-header artefacts ─────────────────────────────────────────
+    # These rows have no '/' so resolve_path() placed them under __UNPARSEABLE__
+    train_junk_mask = train["raw_path"].str.startswith("fold_", na=False)
+    test_junk_mask  = test["raw_path"].str.startswith("fold_", na=False)
+
+    train_junk = int(train_junk_mask.sum())
+    test_junk  = int(test_junk_mask.sum())
+    junk_vals  = train.loc[train_junk_mask, "raw_path"].tolist()
+    junk_vals += test.loc[test_junk_mask,   "raw_path"].tolist()
+
+    print(f"\nEmbedded fold-header rows in Train : {train_junk}")
+    if train_junk:
+        print(f"  Values: {train.loc[train_junk_mask, 'raw_path'].tolist()}")
+        print("  (These are CSV header artefacts, not file paths.)")
+
+    print(f"Embedded fold-header rows in Test  : {test_junk}")
+    if test_junk:
+        print(f"  Values: {test.loc[test_junk_mask, 'raw_path'].tolist()}")
+
+    # ── 4: Train/test path overlap (data leakage check) ───────────────────────
+    # Compare resolved local paths (strings) so both formats map to the same key
+    train_paths = set(train["local_path"].astype(str))
+    test_paths  = set(test["local_path"].astype(str))
+    overlap     = train_paths & test_paths
+    n_overlap   = len(overlap)
+
+    print(f"\nPaths in BOTH splits (leakage) : {n_overlap}")
+    if n_overlap:
+        print("  [WARNING] These files appear in both train AND test:")
+        for p in sorted(overlap)[:5]:
+            print(f"    {p}")
+    else:
+        print("  No train/test path overlap — splits are clean.")
+
+    return {
+        "train_dupes":        train_dupes,
+        "test_dupes":         test_dupes,
+        "train_junk":         train_junk,
+        "test_junk":          test_junk,
+        "junk_values_train":  junk_vals,
+        "path_overlap":       n_overlap,
     }
 
 
@@ -356,6 +411,9 @@ if __name__ == "__main__":
     section("Class / label statistics")
     label_stats = class_statistics(train, test)
 
-    # ── Train vs Test class comparison ────────────────────────────────────────
     section("Train vs Test class set comparison")
     class_comp = compare_class_sets(train, test)
+
+    # ── Duplicate and leakage checks ──────────────────────────────────────────
+    section("Duplicate and data-leakage checks")
+    integrity = check_duplicates_and_leakage(train, test)
