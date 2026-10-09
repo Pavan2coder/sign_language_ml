@@ -45,3 +45,8 @@ LANDMARKS_PER_HAND = 21
 COORDINATES = 3
 
 FEATURES_PER_FRAME = NUM_HANDS * LANDMARKS_PER_HAND * COORDINATES
+
+# Expected shape of one H5 landmark array, ignoring the frame axis.
+# Full array shape is (frames, 2, 21, 3) — frames vary per clip.
+# This tuple is used by data_loader.py to validate loaded arrays.
+EXPECTED_LANDMARK_SHAPE = (NUM_HANDS, LANDMARKS_PER_HAND, COORDINATES)
