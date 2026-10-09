@@ -1,19 +1,19 @@
 
 ======================================================================
-  ISL Sign Language Dataset Analysis Report — STEP 1
+  ISL Sign Language Dataset Analysis Report - STEP 1
 ======================================================================
-  Train CSV    : D:\ISL-DATA\MappingFiles\PersonDependentTrain.csv
-  Test  CSV    : D:\ISL-DATA\MappingFiles\PersonDependentTest.csv
-  MediaPipe    : D:\ISL-DATA\Landmarks\MediaPipe
-  Report dir   : C:\Users\sripa\OneDrive\Desktop\sign-lan\reports
+  Train CSV  : D:\ISL-DATA\MappingFiles\PersonDependentTrain.csv
+  Test  CSV  : D:\ISL-DATA\MappingFiles\PersonDependentTest.csv
+  MediaPipe  : D:\ISL-DATA\Landmarks\MediaPipe
+  Report dir : C:\Users\sripa\OneDrive\Desktop\sign-lan\reports
 
 ======================================================================
   CSV Metadata
 ======================================================================
-  Train original column                     : fold_0
-  Test  original column                     : fold_2
-  Train shape                               : (69507, 1)
-  Test  shape                               : (17256, 1)
+  Train original column                       : fold_0
+  Test  original column                       : fold_2
+  Train shape                                 : (69507, 1)
+  Test  shape                                 : (17256, 1)
 
 ======================================================================
   First 5 rows of Train CSV
@@ -38,607 +38,587 @@
 ======================================================================
   Path Format Breakdown
 ======================================================================
-  Train Format A (normal)                   : 60,090
-  Train Format B (_mnt_ mangled)            : 9,414
-  Train Format C (R2-prefixed)              : 0
-  Train Junk / unparseable rows             : 3
-  Test Format A (normal)                    : 14,788
-  Test Format B (_mnt_ mangled)             : 2,468
-  Test Format C (R2-prefixed)               : 0
-  Test Junk / unparseable rows              : 0
+  Train Format A (normal)                     : 60,090
+  Train Format B (mangled/R2)                 : 9,414
+  Train Exceptional (no USER ID)              : 3
+  Test Format A (normal)                      : 14,788
+  Test Format B (mangled/R2)                  : 2,468
+  Test Exceptional (no USER ID)               : 0
 
 ======================================================================
   File Existence Verification
 ======================================================================
-  Train total entries                       : 69,507
-  Train files FOUND                         : 60,091
-  Train files MISSING                       : 9,416
-  Test total entries                        : 17,256
-  Test files FOUND                          : 14,788
-  Test files MISSING                        : 2,468
-
-  Sample missing TRAIN paths (first 5):
-    D:\ISL-DATA\Landmarks\MediaPipe\ISL_DATA_USER001\Absent__session65__clip028.h5
-    D:\ISL-DATA\Landmarks\MediaPipe\ISL_DATA_USER001\Accept__session49__clip016.h5
-    D:\ISL-DATA\Landmarks\MediaPipe\ISL_DATA_USER001\Accident__session8__clip001.h5
-    D:\ISL-DATA\Landmarks\MediaPipe\ISL_DATA_USER001\Adopt__session8__clip003.h5
-    D:\ISL-DATA\Landmarks\MediaPipe\ISL_DATA_USER001\Alive__session67__clip003.h5
-
-  Sample missing TEST paths (first 5):
-    D:\ISL-DATA\Landmarks\MediaPipe\ISL_DATA_USER001\Absent__session7__clip000.h5
-    D:\ISL-DATA\Landmarks\MediaPipe\ISL_DATA_USER001\Accept__session59__clip018.h5
-    D:\ISL-DATA\Landmarks\MediaPipe\ISL_DATA_USER001\Actor__session37__clip006.h5
-    D:\ISL-DATA\Landmarks\MediaPipe\ISL_DATA_USER001\Adult__session61__clip027.h5
-    D:\ISL-DATA\Landmarks\MediaPipe\ISL_DATA_USER001\Aeroplane__session46__clip001.h5
+  Train normalizable entries                  : 69,504
+  Train files FOUND                           : 69,504
+  Train files MISSING                         : 0
+  Train exceptional rows                      : 3
+  Test normalizable entries                   : 17,256
+  Test files FOUND                            : 17,256
+  Test files MISSING                          : 0
+  Test exceptional rows                       : 0
 
 ======================================================================
   Class / Label Statistics
 ======================================================================
-  Unique classes in Train                   : 503
-  Unique classes in Test                    : 500
-  Overall unique classes                    : 503
+  Unique classes in Train                     : 500
+  Unique classes in Test                      : 500
+  Overall unique classes                      : 500
 
-  Train min  samples/class                  : 1
-  Train max  samples/class                  : 151
-  Train mean samples/class                  : 138.2
-  Test  min  samples/class                  : 23
-  Test  max  samples/class                  : 41
-  Test  mean samples/class                  : 34.5
+  Train min  samples/class                    : 93
+  Train max  samples/class                    : 151
+  Train mean samples/class                    : 139.0
+  Test  min  samples/class                    : 23
+  Test  max  samples/class                    : 41
+  Test  mean samples/class                    : 34.5
 
 ======================================================================
   Top 20 Classes by Train Sample Count
 ======================================================================
 label
-This          151
 Sea           151
+This          151
 Big           149
 Wife          148
-Zebra         148
 Toothpaste    148
-Soap          147
-We            147
-Which         147
+Zebra         148
 Student       147
+Soap          147
+Universe      147
 Paper         147
 Daydream      147
-Universe      147
-Slope         146
-Date          146
-Zipper        146
-Saturday      146
-Woman         146
-Movie         146
+We            147
+Which         147
 Scissors      146
+Saturday      146
+Date          146
+Owl           146
+Slope         146
+Zipper        146
+Paperclip     146
 
 ======================================================================
-  Full Label Distribution (all classes, combined train+test, sorted by count)
+  Full Label Distribution (combined train+test, sorted by count)
 ======================================================================
   Label                                    Combined
   ---------------------------------------- --------
   Sea                                           188
-  Toothpaste                                    184
-  Slope                                         184
-  Student                                       184
   Zebra                                         184
+  Student                                       184
+  Toothpaste                                    184
   Wife                                          184
+  Slope                                         184
+  We                                            183
   Zipper                                        183
   Universe                                      183
-  This                                          183
   Saturday                                      183
-  We                                            183
+  This                                          183
   Date                                          183
-  Paper                                         182
-  Peel                                          182
-  Which                                         182
-  Youngersister                                 182
-  Daydream                                      182
   Soap                                          182
-  University                                    181
-  Washface                                      181
-  Upset                                         181
-  Parachute                                     181
+  Daydream                                      182
+  Peel                                          182
+  Youngersister                                 182
+  Paper                                         182
+  Which                                         182
   Season                                        181
-  Paperclip                                     181
+  Parachute                                     181
+  University                                    181
   Party                                         181
-  Clarify                                       180
-  Movie                                         180
-  Owl                                           180
-  Morning                                       180
-  Walk                                          180
-  Shirt                                         180
-  Shy                                           180
-  Waterfall                                     180
-  Quota                                         180
-  Low                                           180
-  Square                                        180
-  Dark                                          180
+  Upset                                         181
+  Washface                                      181
+  Paperclip                                     181
   Team                                          180
-  Young                                         180
-  You                                           180
+  Walk                                          180
   Why                                           180
+  Waterfall                                     180
+  Shirt                                         180
+  Owl                                           180
+  Movie                                         180
+  You                                           180
+  Low                                           180
+  Young                                         180
   Scissors                                      180
-  Computer                                      179
-  Vocabulary                                    179
-  Warm                                          179
-  Our                                           179
-  Toothpick                                     179
-  Mother                                        179
-  Music                                         179
-  Pumpkin                                       179
-  Queen                                         179
-  Telescope                                     179
-  Dash                                          179
-  Lady                                          179
-  Stay                                          179
-  Red                                           179
+  Morning                                       180
+  Dark                                          180
+  Clarify                                       180
+  Quota                                         180
+  Shy                                           180
+  Square                                        180
   Laptop                                        179
+  Our                                           179
+  Mother                                        179
+  Red                                           179
+  Pumpkin                                       179
+  Computer                                      179
+  School                                        179
+  Stay                                          179
+  Lady                                          179
+  Music                                         179
+  Mat                                           179
   Hour                                          179
   Spring                                        179
-  Watermelon                                    179
-  Rose                                          179
-  Mat                                           179
+  Queen                                         179
+  Warm                                          179
   Washhands                                     179
+  Vocabulary                                    179
   Big                                           179
-  School                                        179
-  Approve                                       178
-  Blow                                          178
-  Pin                                           178
-  Picture                                       178
-  Colour                                        178
-  Camera                                        178
-  Thin                                          178
-  Mouse                                         178
-  Weekly                                        178
-  President                                     178
-  Lawyer                                        178
-  Flower                                        178
-  Jewelery                                      178
-  Panic                                         178
+  Dash                                          179
+  Telescope                                     179
+  Watermelon                                    179
+  Toothpick                                     179
+  Rose                                          179
   Pizza                                         178
-  Pair                                          178
-  Female                                        178
-  Restaurant                                    178
-  Famous                                        178
   Wednesday                                     178
+  Thin                                          178
+  Weekly                                        178
+  Approve                                       178
   Alot                                          178
-  Slow                                          178
+  Jewelery                                      178
+  Lawyer                                        178
+  Mouse                                         178
   Fox                                           178
-  Spoon                                         178
-  Spider                                        178
-  Son                                           178
+  Flower                                        178
+  Famous                                        178
+  Pin                                           178
+  President                                     178
+  Restaurant                                    178
+  Female                                        178
   Winter                                        178
-  Wolf                                          177
-  Secretary                                     177
-  Snake                                         177
-  Shooting                                      177
-  Animals                                       177
-  Soon                                          177
-  Work                                          177
-  Bald                                          177
-  Sports                                        177
-  Dance                                         177
-  Justify                                       177
-  Energy                                        177
-  Swelling                                      177
-  Lion                                          177
-  Television                                    177
-  Quiet                                         177
-  Motor                                         177
-  Necklace                                      177
-  Change                                        177
-  Cool                                          177
-  Pineapple                                     177
-  Wait                                          177
-  War                                           177
-  Once                                          177
-  Travel                                        177
-  Photgraph                                     177
-  Next                                          177
-  Coat                                          177
-  Things                                        177
-  Waste                                         177
+  Camera                                        178
+  Slow                                          178
+  Son                                           178
+  Spider                                        178
+  Blow                                          178
+  Spoon                                         178
+  Colour                                        178
+  Panic                                         178
+  Pair                                          178
+  Picture                                       178
   Wet                                           177
-  Yes                                           177
-  Garden                                        177
-  Short                                         177
-  Same                                          177
-  Sandwich                                      177
-  Deadline                                      177
+  Motor                                         177
   Tear                                          177
   Technology                                    177
+  Travel                                        177
+  Things                                        177
+  Bald                                          177
+  Waste                                         177
+  War                                           177
+  Wait                                          177
   Thankyou                                      177
+  Television                                    177
+  Necklace                                      177
+  Lion                                          177
+  Justify                                       177
+  Snake                                         177
+  Secretary                                     177
+  Soon                                          177
+  Garden                                        177
   Flag                                          177
+  Next                                          177
+  Wolf                                          177
+  Work                                          177
+  Yes                                           177
+  Animals                                       177
+  Quiet                                         177
+  Pineapple                                     177
+  Photgraph                                     177
+  Shooting                                      177
+  Short                                         177
+  Same                                          177
+  Coat                                          177
+  Cool                                          177
+  Energy                                        177
+  Sports                                        177
+  Swelling                                      177
+  Sandwich                                      177
+  Change                                        177
+  Deadline                                      177
+  Dance                                         177
+  Once                                          177
   Van                                           176
-  Cry                                           176
-  Month                                         176
-  Blue                                          176
-  Tight                                         176
-  Tomato                                        176
-  Adopt                                         176
-  Mug                                           176
-  Beetroot                                      176
   Waiter                                        176
+  Tight                                         176
+  Beetroot                                      176
   Under                                         176
-  Gate                                          176
-  Ant                                           176
-  Horse                                         176
-  Hammer                                        176
-  Sofa                                          176
-  Yesterday                                     176
-  Small                                         176
-  Glass                                         176
-  Letter                                        176
-  Loud                                          176
-  Fine                                          176
-  Find                                          176
-  Jail                                          176
-  Elephant                                      176
-  Tall                                          176
-  Funny                                         176
-  Rush                                          176
-  Summer                                        176
-  Kid                                           176
+  Tomato                                        176
   Sunday                                        176
-  Lamp                                          176
-  Lightning                                     176
-  Moon                                          176
+  Tall                                          176
+  Blue                                          176
+  Summer                                        176
+  Small                                         176
+  Rush                                          176
+  Cry                                           176
+  Sofa                                          176
   Door                                          176
-  Newsreader                                    175
-  Aunt                                          175
-  Birds                                         175
-  Pen                                           175
-  Bath                                          175
-  Onion                                         175
-  Vehicle                                       175
-  Brown                                         175
+  Mug                                           176
+  Loud                                          176
+  Lightning                                     176
+  Letter                                        176
+  Kid                                           176
+  Elephant                                      176
+  Lamp                                          176
+  Month                                         176
+  Moon                                          176
+  Hammer                                        176
+  Glass                                         176
+  Gate                                          176
+  Find                                          176
+  Fine                                          176
+  Funny                                         176
+  Jail                                          176
+  Horse                                         176
+  Yesterday                                     176
+  Ant                                           176
+  Adopt                                         176
   Zoo                                           175
-  Cloth                                         175
-  Cold                                          175
+  Vehicle                                       175
+  Bath                                          175
   Century                                       175
+  Sad                                           175
+  Rain                                          175
+  Birds                                         175
+  Sun                                           175
   Tonight                                       175
+  Grey                                          175
+  Over                                          175
+  Father                                        175
+  Aunt                                          175
+  Mouth                                         175
+  Newsreader                                    175
+  Author                                        175
+  Eagle                                         175
+  Lock                                          175
+  Light                                         175
+  Sink                                          175
+  Shop                                          175
+  Samosa                                        175
+  Brown                                         175
   Calf                                          175
   Bullockcart                                   175
-  Mouth                                         175
-  Over                                          175
-  Cycle                                         175
-  Please                                        175
-  Police                                        175
-  Plan                                          175
-  Price                                         175
-  Rain                                          175
-  Light                                         175
-  Donkey                                        175
-  Plumber                                       175
-  Education                                     175
-  Election                                      175
-  Father                                        175
-  Lock                                          175
-  Dress                                         175
-  Eagle                                         175
-  Sun                                           175
-  Sink                                          175
-  Grey                                          175
-  Shop                                          175
   Handle                                        175
   Her                                           175
-  Samosa                                        175
-  Sad                                           175
-  Author                                        175
-  What                                          174
-  Way                                           174
-  Back                                          174
-  Ball                                          174
-  Window                                        174
-  Head                                          174
-  Sister                                        174
-  Age                                           174
-  Town                                          174
-  Oil                                           174
-  Noon                                          174
-  Heart                                         174
-  Hard                                          174
-  Hideandseek                                   174
-  Game                                          174
-  Good                                          174
-  Finish                                        174
-  Fire                                          174
+  Dress                                         175
+  Donkey                                        175
+  Cycle                                         175
+  Onion                                         175
+  Cloth                                         175
+  Pen                                           175
+  Education                                     175
+  Election                                      175
+  Plan                                          175
+  Cold                                          175
+  Please                                        175
+  Plumber                                       175
+  Price                                         175
+  Police                                        175
+  White                                         174
+  Where                                         174
+  Younger                                       174
+  Anxiety                                       174
   Woman                                         174
-  Few                                           174
-  Ready                                         174
-  Rich                                          174
-  Sweater                                       174
-  Tape                                          174
+  Yourself                                      174
+  Way                                           174
+  What                                          174
   Fall                                          174
+  Rich                                          174
+  Button                                        174
+  Hard                                          174
   Rank                                          174
-  King                                          174
-  Eco                                           174
-  Deer                                          174
+  Ready                                         174
+  Cave                                          174
+  Sister                                        174
+  Chair                                         174
+  Head                                          174
+  Sweater                                       174
+  Bib                                           174
   Temple                                        174
   They                                          174
-  Radio                                         174
-  Chair                                         174
-  Cave                                          174
-  Button                                        174
+  Hideandseek                                   174
+  Few                                           174
+  Ban                                           174
+  Game                                          174
+  Town                                          174
+  Good                                          174
+  Tape                                          174
+  Bolt                                          174
   Thirsty                                       174
   Thief                                         174
+  Fire                                          174
+  Finish                                        174
+  Oil                                           174
+  Nose                                          174
+  Papaya                                        174
   Manager                                       174
+  Window                                        174
+  Age                                           174
+  Any                                           174
+  Noon                                          174
   Medicine                                      174
   Monday                                        174
-  Papaya                                        174
-  Yourself                                      174
-  Where                                         174
-  Nose                                          174
-  Bolt                                          174
   Noise                                         174
-  Ban                                           174
+  Back                                          174
+  Deer                                          174
+  Ball                                          174
+  King                                          174
+  Radio                                         174
+  Eco                                           174
+  Heart                                         174
   Myself                                        174
-  Any                                           174
-  Anxiety                                       174
-  Bib                                           174
-  Younger                                       174
-  White                                         174
-  Transport                                     173
-  Water                                         173
-  Year                                          173
-  Daughter                                      173
-  Deaf                                          173
-  Library                                       173
-  Ladder                                        173
-  Dog                                           173
-  Support                                       173
-  Evening                                       173
-  Ugly                                          173
-  Giraffe                                       173
-  Squirrel                                      173
-  Gift                                          173
-  Road                                          173
-  Snow                                          173
-  Wide                                          173
-  Sit                                           173
-  Expensive                                     173
-  Adult                                         173
-  Basket                                        173
-  Pink                                          173
-  Bite                                          173
-  Tootbrush                                     173
-  Official                                      173
-  Office                                        173
-  No                                            173
-  Campus                                        173
-  Cook                                          173
-  Neighbor                                      173
-  New                                           173
-  Tomorrow                                      173
-  Child                                         173
-  Cage                                          173
-  Tortoise                                      173
-  Clock                                         173
   Wanted                                        173
+  Giraffe                                       173
+  Basket                                        173
+  Adult                                         173
+  Gift                                          173
+  Tomorrow                                      173
+  Ugly                                          173
+  Tortoise                                      173
+  Tootbrush                                     173
+  Bite                                          173
   Biscuit                                       173
   Byte                                          173
+  Support                                       173
+  Evening                                       173
+  Expensive                                     173
+  Road                                          173
+  Child                                         173
+  Snow                                          173
+  Squirrel                                      173
+  Cage                                          173
+  Campus                                        173
+  Sit                                           173
+  Transport                                     173
   Thursday                                      173
-  Market                                        173
-  Concept                                       173
-  Mask                                          173
-  Clean                                         173
   Time                                          173
-  Ballet                                        172
+  Concept                                       173
+  Cook                                          173
+  Library                                       173
+  Pink                                          173
+  Office                                        173
+  Official                                      173
+  Daughter                                      173
+  Deaf                                          173
+  Clean                                         173
+  Clock                                         173
+  Ladder                                        173
+  Dog                                           173
+  Neighbor                                      173
+  Mask                                          173
+  Market                                        173
+  New                                           173
+  No                                            173
+  Water                                         173
+  Year                                          173
+  Wide                                          173
   Airport                                       172
-  Sheep                                         172
-  She                                           172
-  Scar                                          172
-  Help                                          172
-  Discount                                      172
-  Dream                                         172
-  Location                                      172
-  Drink                                         172
-  Farm                                          172
-  Liver                                         172
-  Cupboard                                      172
-  Dry                                           172
-  Job                                           172
-  Jealous                                       172
-  Tea                                           172
-  Syrup                                         172
-  Income                                        172
-  Soup                                          172
-  Salt                                          172
-  Factory                                       172
   All                                           172
-  He                                            172
-  Health                                        172
-  Goodnight                                     172
-  Cat                                           172
-  Night                                         172
-  Coin                                          172
-  Marry                                         172
-  Brain                                         172
-  Capital                                       172
-  Candy                                         172
-  Chart                                         172
-  Up                                            172
-  Open                                          172
   Artist                                        172
+  Ballet                                        172
+  Dream                                         172
+  Marry                                         172
+  Location                                      172
+  Liver                                         172
+  Coin                                          172
+  Farm                                          172
+  Cupboard                                      172
   Paint                                         172
-  Lunch                                         171
-  That                                          171
-  Join                                          171
-  Little                                        171
-  Monsoon                                       171
-  Poor                                          171
+  Discount                                      172
+  Open                                          172
+  Night                                         172
+  Dry                                           172
+  Drink                                         172
+  Help                                          172
+  Jealous                                       172
+  Income                                        172
+  Brain                                         172
+  Health                                        172
+  He                                            172
+  Job                                           172
+  Chart                                         172
+  Salt                                          172
+  Candy                                         172
+  Capital                                       172
+  Cat                                           172
+  She                                           172
+  Sheep                                         172
+  Scar                                          172
+  Factory                                       172
+  Goodnight                                     172
+  Up                                            172
+  Tea                                           172
+  Soup                                          172
+  Syrup                                         172
   Proof                                         171
-  Close                                         171
-  Calculator                                    171
-  Teacher                                       171
-  Family                                        171
-  Earthquake                                    171
-  Football                                      171
-  Fear                                          171
-  Goodmorning                                   171
-  Google                                        171
-  Get                                           171
-  Favourite                                     171
-  Girl                                          171
-  Give                                          171
-  Golf                                          171
-  Shoot                                         171
-  India                                         171
+  Join                                          171
   It                                            171
-  Go                                            171
+  Calculator                                    171
   Holiday                                       171
-  Knock                                         171
-  Range                                         171
-  Regret                                        171
+  India                                         171
+  That                                          171
   Knife                                         171
+  Knock                                         171
+  Regret                                        171
+  Range                                         171
+  Close                                         171
+  Poor                                          171
+  Lunch                                         171
+  Family                                        171
+  Little                                        171
+  Earthquake                                    171
+  Fear                                          171
+  Favourite                                     171
+  Monsoon                                       171
+  Comb                                          171
   Tool                                          171
   Bathroom                                      171
+  Girl                                          171
+  Get                                           171
+  Give                                          171
+  Goodmorning                                   171
+  Teacher                                       171
+  Go                                            171
+  Shoot                                         171
   Uncle                                         171
-  Comb                                          171
-  Bear                                          170
-  Call                                          170
-  Boy                                           170
+  Football                                      171
+  Golf                                          171
+  Google                                        171
+  Baby                                          170
   Better                                        170
-  Careful                                       170
-  Cure                                          170
-  Bandaid                                       170
-  Handcuffs                                     170
-  Bail                                          170
-  Weak                                          170
-  Key                                           170
-  Judge                                         170
-  Potato                                        170
-  Rainbow                                       170
-  Old                                           170
-  Man                                           170
-  Aeroplane                                     170
-  Actor                                         170
-  Mango                                         170
-  Touch                                         170
+  Some                                          170
   Tuesday                                       170
-  Car                                           170
+  Swim                                          170
+  Bear                                          170
+  Touch                                         170
+  Bandaid                                       170
+  Aeroplane                                     170
+  Call                                          170
+  Handcuffs                                     170
+  Kidnap                                        170
+  Key                                           170
+  Boy                                           170
+  House                                         170
   Have                                          170
-  Fan                                           170
   Hearing                                       170
   Enter                                         170
-  Swim                                          170
-  Some                                          170
-  House                                         170
-  Kidnap                                        170
-  Baby                                          170
+  Actor                                         170
+  Weak                                          170
+  Rainbow                                       170
+  Potato                                        170
+  Careful                                       170
+  Cure                                          170
+  Old                                           170
+  Bail                                          170
+  Mango                                         170
+  Fan                                           170
+  Man                                           170
   Bag                                           170
-  Candle                                        169
-  Eat                                           169
-  City                                          169
-  Today                                         169
-  Bell                                          169
-  Offer                                         169
-  Pain                                          169
-  Mean                                          169
+  Judge                                         170
+  Car                                           170
+  Half                                          169
+  Truck                                         169
+  Food                                          169
+  Gloves                                        169
   Accident                                      169
-  Packing                                       169
+  Today                                         169
+  Birthday                                      169
+  Glove                                         169
+  Gun                                           169
+  City                                          169
+  Cheap                                         169
+  Candle                                        169
+  Hot                                           169
+  Bus                                           169
+  Heavy                                         169
   Doctor                                        169
+  Pain                                          169
+  Offer                                         169
+  Packing                                       169
+  Eat                                           169
   Cute                                          169
   Accept                                        169
-  Bus                                           169
-  Food                                          169
-  Half                                          169
-  Gloves                                        169
-  Friend                                        169
-  Heavy                                         169
-  Gun                                           169
-  Cheap                                         169
+  Mean                                          169
   Book                                          169
-  Birthday                                      169
-  Truck                                         169
-  Hot                                           169
   Hit                                           169
-  Glove                                         169
+  Bell                                          169
+  Friend                                        169
   Kitchen                                       169
-  Goodafternoon                                 168
   Feel                                          168
-  Fast                                          168
-  Grandfather                                   168
   Fat                                           168
-  Boat                                          168
   Bad                                           168
-  Bowl                                          168
+  Easy                                          168
+  Fast                                          168
   Basketball                                    168
   Tonsil                                        168
-  Easy                                          168
+  Grandfather                                   168
+  Goodafternoon                                 168
   Catch                                         168
-  Narrow                                        167
-  Bread                                         167
+  Bowl                                          168
+  Boat                                          168
+  Become                                        167
   Mass                                          167
-  Your                                          167
-  Baseball                                      167
+  Beach                                         167
   Beautiful                                     167
-  Beat                                          167
-  Breathe                                       167
-  Cow                                           167
-  Ring                                          167
-  His                                           167
-  Husband                                       167
   Happy                                         167
+  Bread                                         167
+  Bright                                        167
   Hat                                           167
-  Hello                                         167
   Hang                                          167
+  His                                           167
+  Ring                                          167
+  Husband                                       167
+  Breathe                                       167
+  Your                                          167
+  Narrow                                        167
+  Cow                                           167
+  Badge                                         167
+  Hello                                         167
+  Beat                                          167
   Fish                                          167
+  Baseball                                      167
+  Exercise                                      167
+  Bill                                          167
   Goodevening                                   167
   Green                                         167
-  Exercise                                      167
-  Badge                                         167
-  Bill                                          167
-  Become                                        167
-  Beach                                         167
-  Bright                                        167
   Nice                                          166
-  Alive                                         166
   Duck                                          166
-  Bank                                          166
-  Day                                           166
+  Alive                                         166
   Editor                                        166
-  East                                          166
-  Kite                                          166
+  Bank                                          166
   Hill                                          166
+  East                                          166
+  Day                                           166
+  Kite                                          166
   God                                           166
-  Meeting                                       165
-  Court                                         165
-  Before                                        165
-  After                                         165
   Grandmother                                   165
+  After                                         165
+  Court                                         165
+  Meeting                                       165
+  Before                                        165
   Balloon                                       164
   Black                                         164
   Absent                                        164
   Earrings                                      164
-  I                                             162
   Large                                         162
   Behind                                        162
+  I                                             162
   Monkey                                        157
   Belt                                          116
-  fold_1                                          1
-  fold_3                                          1
-  fold_4                                          1
 
 ======================================================================
   Train vs Test Class Set Comparison
 ======================================================================
-  Classes in BOTH splits                    : 500
-  Classes in TRAIN only                     : 3
-  Classes in TEST only                      : 0
-
-  Train-only labels:
-    fold_1, fold_3, fold_4
+  Classes in BOTH splits                      : 500
+  Classes in TRAIN only                       : 0
+  Classes in TEST only                        : 0
 
 ======================================================================
-  Integrity Checks (Duplicates, Junk Rows, Data Leakage)
+  Integrity Checks
 ======================================================================
-  Duplicate rows in Train CSV               : 0
-  Duplicate rows in Test  CSV               : 0
-  Embedded fold-header rows in Train        : 3
-  Embedded fold-header rows in Test         : 0
-  Paths in BOTH splits (leakage)            : 0
+  Duplicate rows in Train CSV                 : 0
+  Duplicate rows in Test  CSV                 : 0
+  Header-artefact rows in Train               : 3
+  Header-artefact rows in Test                : 0
+  Paths in BOTH splits (leakage)              : 0
 
-  Junk fold-header values found in Train:
+  Junk fold-header values found:
     fold_1, fold_3, fold_4
 
 ======================================================================
