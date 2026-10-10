@@ -36,18 +36,9 @@ class ISLDataset(Dataset):
     """
     PyTorch Dataset for ISL500 MediaPipe landmark sequences.
 
-    Each __getitem__ call:
-      1. Opens exactly one HDF5 file with load_h5_file().
-      2. Applies the full preprocessing pipeline via preprocess_sample().
-      3. Returns (FloatTensor shape (MAX_SEQ_LEN, 126), int label_id).
-
-    Only a lightweight list of paths and pre-computed integer IDs is held
-    in memory — no landmark arrays are cached between calls.
-
-    Args:
-        df          : DataFrame with 'local_path' and 'label' columns.
-        label_to_id : {label_str: int_id} from build_label_encoder().
-        max_seq_len : frames per sequence after padding/truncation.
+    Each __getitem__ call opens one HDF5, preprocesses, and returns
+    (FloatTensor(MAX_SEQ_LEN, 126), int label_id).
+    No landmark data is cached between calls.
     """
 
     def __init__(
@@ -64,6 +55,38 @@ class ISLDataset(Dataset):
         return len(self._paths)
 
     def __getitem__(self, idx: int) -> Tuple[torch.FloatTensor, int]:
-        raw      = load_h5_file(self._paths[idx])          # (F, 2, 21, 3)
-        features = preprocess_sample(raw, self._max_seq_len)  # (T, 126)
+        raw      = load_h5_file(self._paths[idx])
+        features = preprocess_sample(raw, self._max_seq_len)
         return torch.from_numpy(features), self._label_ids[idx]
+
+
+# ── compute_seq_lengths ───────────────────────────────────────────────────────
+
+def compute_seq_lengths(features_batch: torch.Tensor) -> torch.LongTensor:
+    """
+    Return the real (non-padding) frame count for each sequence in a batch.
+
+    After preprocessing, real frames have at least one non-zero value
+    (wrist = [0,0,0] but other landmarks are non-zero after centering).
+    Padding frames are ALL exactly zero.
+
+    Used to create PackedSequence inputs so the GRU never processes padding.
+
+    Args:
+        features_batch : torch.Tensor, shape (batch, seq_len, feature_dim).
+
+    Returns:
+        torch.LongTensor, shape (batch,), values in [1, seq_len].
+    """
+    # Frame is "real" if at least one feature is non-zero
+    real_mask = features_batch.abs().sum(dim=-1) > 0   # (B, T)
+
+    B = features_batch.size(0)
+    lengths = torch.ones(B, dtype=torch.long)
+
+    for i in range(B):
+        real_idx = real_mask[i].nonzero(as_tuple=False)
+        if len(real_idx) > 0:
+            lengths[i] = real_idx[-1].item() + 1   # last real frame + 1
+
+    return lengths
