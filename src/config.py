@@ -62,12 +62,26 @@ DEFAULT_LR:           float = 1e-3
 DEFAULT_WEIGHT_DECAY: float = 1e-4
 PATIENCE:             int   = 5
 
-# GRU model architecture
-# input  : (batch, MAX_SEQ_LEN=150, FEATURE_DIM=126)
-# GRU    : GRU_NUM_LAYERS stacked layers, hidden=GRU_HIDDEN_SIZE
-# head   : LayerNorm -> Linear(GRU_HIDDEN_SIZE, FC_HIDDEN_SIZE) -> ReLU
-#          -> Dropout -> Linear(FC_HIDDEN_SIZE, NUM_CLASSES)
-GRU_HIDDEN_SIZE: int   = 256   # hidden units per GRU layer
-GRU_NUM_LAYERS:  int   = 2     # stacked layers
-GRU_DROPOUT:     float = 0.3   # dropout between layers (ignored if layers=1)
-FC_HIDDEN_SIZE:  int   = 256   # fully-connected head hidden dimension
+GRU_HIDDEN_SIZE: int   = 256
+GRU_NUM_LAYERS:  int   = 2
+GRU_DROPOUT:     float = 0.3
+FC_HIDDEN_SIZE:  int   = 256
+
+
+# ============================================================
+# CHECKPOINT CONFIGURATION
+# ============================================================
+
+CHECKPOINT_DIR = MODEL_DIR / "checkpoints"
+
+# Saved at the end of every epoch — use this to resume training
+LATEST_CKPT_NAME: str = "latest_checkpoint.pt"
+
+# Saved only when val_loss improves — use this for final evaluation
+BEST_CKPT_NAME:   str = "best_model.pt"
+
+# Class-label -> integer mapping saved alongside checkpoints
+LABEL_MAP_NAME:   str = "label_to_id.json"
+
+# Per-epoch loss / accuracy log saved in reports/
+HISTORY_CSV_NAME: str = "training_history.csv"
