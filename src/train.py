@@ -49,8 +49,7 @@ def get_device(require_cuda=False):
         p = torch.cuda.get_device_properties(0)
         print(f"[device] GPU: {p.name}  VRAM: {p.total_memory/1024**3:.1f} GB  SM: {p.major}.{p.minor}")
         return torch.device("cuda:0")
-    if require_cuda:
-        raise RuntimeError("CUDA not available.")
+    if require_cuda: raise RuntimeError("CUDA not available.")
     print("[device] CPU mode."); return torch.device("cpu")
 
 
@@ -95,7 +94,7 @@ def _atomic_save(obj, path):
 def save_checkpoint(path, model, optimizer, scheduler, epoch,
                     best_val_loss, patience_counter, label_to_id, cfg):
     _atomic_save({
-        "model_state_dict":     model.state_dict(),
+        "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "scheduler_state_dict": scheduler.state_dict(),
         "epoch": epoch, "best_val_loss": best_val_loss,
@@ -126,51 +125,133 @@ def load_checkpoint(path, model, optimizer, scheduler, device):
     return ckpt
 
 
-# ── Per-epoch pass ────────────────────────────────────────────────────────────
-
 def run_epoch(model, loader, criterion, device, optimizer=None):
-    """
-    Run one pass over a DataLoader (train when optimizer is provided,
-    otherwise evaluate).
-
-    Returns (mean_loss, accuracy_percent).
-
-    Gradient clipping (max_norm=5.0) is applied during training to
-    prevent exploding gradients — a common issue with stacked GRUs.
-    """
     is_train = optimizer is not None
     model.train(is_train)
     total_loss = total_correct = total_n = 0
-
     ctx = torch.enable_grad() if is_train else torch.no_grad()
     with ctx:
         for bx, by in loader:
-            bx = bx.to(device, non_blocking=True)   # (B, T, 126)
-            by = by.to(device, non_blocking=True)   # (B,)
-            lengths = compute_seq_lengths(bx)
-            logits  = model(bx, lengths)             # (B, 500)
-            loss    = criterion(logits, by)
-
+            bx = bx.to(device, non_blocking=True)
+            by = by.to(device, non_blocking=True)
+            logits = model(bx, compute_seq_lengths(bx))
+            loss   = criterion(logits, by)
             if is_train:
-                optimizer.zero_grad()
-                loss.backward()
-                nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+                optimizer.zero_grad(); loss.backward()
+                nn.utils.clip_grad_norm_(model.parameters(), 5.0)
                 optimizer.step()
-
             total_loss    += loss.item() * len(by)
             total_correct += (logits.argmax(1) == by).sum().item()
             total_n       += len(by)
-
     return total_loss / total_n, total_correct / total_n * 100.0
 
 
-# ── History CSV helper ────────────────────────────────────────────────────────
-
-def _append_history_row(csv_path: Path, row: dict) -> None:
-    """Append one epoch row to the training history CSV."""
+def _append_history_row(csv_path, row):
     write_header = not csv_path.exists()
     with open(csv_path, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
-        if write_header:
-            writer.writeheader()
-        writer.writerow(row)
+        w = csv.DictWriter(f, fieldnames=list(row.keys()))
+        if write_header: w.writeheader()
+        w.writerow(row)
+
+
+# ── Main training function — setup + data loading + model ─────────────────────
+
+def train(
+    epochs=DEFAULT_EPOCHS, batch_size=DEFAULT_BATCH_SIZE,
+    lr=DEFAULT_LR, weight_decay=DEFAULT_WEIGHT_DECAY,
+    resume=False, smoke=False,
+):
+    """
+    Full training loop for the ISL500 GRU classifier.
+
+    Phases:
+      1. Seed + device selection
+      2. Load train mapping; build label encoder
+      3. Optional smoke subsample (200 samples, 2 epochs)
+      4. Stratified 85/15 train/val split (from training data only)
+      5. Build DataLoaders (lazy HDF5 loading)
+      6. Build GRUClassifier + AdamW + ReduceLROnPlateau
+      7. Optionally resume from latest checkpoint
+      8. Training loop with early stopping + checkpointing
+    """
+    set_seeds(RANDOM_SEED)
+    device = get_device()
+    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+
+    print(f"\n{'='*60}")
+    print(f"  ISL500 Sign Language Recognition — Training")
+    print(f"{'='*60}")
+    if smoke: print("  [SMOKE TEST MODE] — 2 epochs, 200 samples")
+    print(f"  epochs={epochs}  batch={batch_size}  lr={lr}  device={device}\n")
+
+    # ── Load data ──────────────────────────────────────────────────────────────
+    print("[1] Loading train mapping...")
+    train_df = load_mapping("train")
+    print(f"    Total train samples: {len(train_df):,}")
+
+    print("[2] Building label encoder...")
+    label_to_id = build_label_encoder(train_df)
+    id_to_label = {v: k for k, v in label_to_id.items()}
+    print(f"    Classes: {len(label_to_id)}")
+
+    if smoke:
+        train_df = train_df.sample(min(200, len(train_df)), random_state=RANDOM_SEED).reset_index(drop=True)
+        epochs   = 2
+        print(f"    [smoke] Subsampled to {len(train_df)} samples, 2 epochs")
+
+    print("[3] Creating stratified train/val split (15% val)...")
+    train_sub, val_sub = make_train_val_split(train_df)
+    print(f"    Train: {len(train_sub):,}   Val: {len(val_sub):,}")
+
+    print("[4] Creating DataLoaders...")
+    train_loader, val_loader = make_dataloaders(
+        train_sub, val_sub, label_to_id, batch_size, num_workers=0)
+    print(f"    Train batches: {len(train_loader)}   Val batches: {len(val_loader)}")
+
+    # ── Build model + optimizer + scheduler ────────────────────────────────────
+    print("[5] Building model...")
+    model     = GRUClassifier().to(device)
+    n_params  = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"    Trainable parameters: {n_params:,}")
+
+    optimizer = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    scheduler = ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=3)
+    criterion = nn.CrossEntropyLoss()
+
+    start_epoch      = 0
+    best_val_loss    = float("inf")
+    patience_counter = 0
+    history_csv      = REPORT_DIR / HISTORY_CSV_NAME
+    latest_ckpt      = CHECKPOINT_DIR / LATEST_CKPT_NAME
+
+    train_cfg = {
+        "epochs": epochs, "batch_size": batch_size, "lr": lr,
+        "weight_decay": weight_decay, "max_seq_len": MAX_SEQ_LEN,
+        "feature_dim": FEATURE_DIM, "num_classes": NUM_CLASSES,
+        "gru_hidden": GRU_HIDDEN_SIZE, "gru_layers": GRU_NUM_LAYERS,
+        "fc_hidden": FC_HIDDEN_SIZE, "random_seed": RANDOM_SEED,
+    }
+
+    # ── Resume ─────────────────────────────────────────────────────────────────
+    if resume:
+        if not latest_ckpt.exists():
+            raise FileNotFoundError(
+                f"No checkpoint at {latest_ckpt}\nRun without --resume to start fresh.")
+        print(f"[6] Resuming from: {latest_ckpt}")
+        ckpt             = load_checkpoint(latest_ckpt, model, optimizer, scheduler, device)
+        start_epoch      = ckpt["epoch"] + 1
+        best_val_loss    = ckpt["best_val_loss"]
+        patience_counter = ckpt["patience_counter"]
+        label_to_id      = ckpt["label_to_id"]
+        id_to_label      = {v: k for k, v in label_to_id.items()}
+        print(f"    Resumed at epoch {start_epoch}, best_val_loss={best_val_loss:.4f}")
+    else:
+        print("[6] Starting fresh training run")
+
+    # ── Save label map ─────────────────────────────────────────────────────────
+    lm_path = CHECKPOINT_DIR / LABEL_MAP_NAME
+    with open(lm_path, "w") as f:
+        json.dump(label_to_id, f, indent=2)
+    print(f"    Label map: {lm_path}")
