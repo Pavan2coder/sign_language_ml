@@ -68,23 +68,8 @@ def get_device(require_cuda: bool = False) -> torch.device:
     return device
 
 
-# ── GRUClassifier ─────────────────────────────────────────────────────────────
-
 class GRUClassifier(nn.Module):
-    """
-    Stacked GRU sequence classifier for ISL500.
-
-    Architecture:
-        GRU(input=126, hidden=256, layers=2, dropout=0.3)
-            -> last hidden state h_n[-1]  shape (batch, 256)
-        LayerNorm(256)
-        Linear(256, 256) -> ReLU -> Dropout(0.3)
-        Linear(256, 500)
-        -> raw logits  (batch, 500)
-
-    When sequence lengths are provided the GRU uses PackedSequence
-    so padding frames never influence the hidden state.
-    """
+    """Stacked GRU classifier. Input (B, 150, 126) -> logits (B, 500)."""
 
     def __init__(
         self,
@@ -98,47 +83,66 @@ class GRUClassifier(nn.Module):
         super().__init__()
         self.hidden_size = hidden_size
         self.num_layers  = num_layers
-
         gru_drop = dropout if num_layers > 1 else 0.0
         self.gru = nn.GRU(
-            input_size  = input_size,
-            hidden_size = hidden_size,
-            num_layers  = num_layers,
-            batch_first = True,
-            dropout     = gru_drop,
+            input_size=input_size, hidden_size=hidden_size,
+            num_layers=num_layers, batch_first=True, dropout=gru_drop,
         )
         self.head = nn.Sequential(
             nn.LayerNorm(hidden_size),
-            nn.Linear(hidden_size, fc_hidden),
-            nn.ReLU(inplace=True),
+            nn.Linear(hidden_size, fc_hidden), nn.ReLU(inplace=True),
             nn.Dropout(p=dropout),
             nn.Linear(fc_hidden, num_classes),
         )
 
-    def forward(
-        self,
-        x:       torch.Tensor,
-        lengths: Optional[torch.LongTensor] = None,
-    ) -> torch.Tensor:
-        """
-        Args:
-            x       : (batch, seq_len, 126) padded sequences.
-            lengths : (batch,) real sequence lengths; enables PackedSequence.
-
-        Returns:
-            logits  : (batch, num_classes)
-        """
+    def forward(self, x: torch.Tensor,
+                lengths: Optional[torch.LongTensor] = None) -> torch.Tensor:
         if lengths is not None:
-            lengths_cpu   = lengths.clamp(min=1, max=x.size(1)).cpu()
-            sorted_len, sort_idx = lengths_cpu.sort(descending=True)
+            lc = lengths.clamp(min=1, max=x.size(1)).cpu()
+            sl, si = lc.sort(descending=True)
             packed = nn.utils.rnn.pack_padded_sequence(
-                x[sort_idx], sorted_len, batch_first=True, enforce_sorted=True
-            )
+                x[si], sl, batch_first=True, enforce_sorted=True)
             _, h_n = self.gru(packed)
-            _, unsort = sort_idx.sort()
-            h_last = h_n[-1][unsort]
+            _, ui  = si.sort()
+            h_last = h_n[-1][ui]
         else:
             _, h_n = self.gru(x)
             h_last = h_n[-1]
-
         return self.head(h_last)
+
+
+# ── Stratified train/validation split ────────────────────────────────────────
+
+def make_train_val_split(
+    train_df:     pd.DataFrame,
+    val_fraction: float = VAL_FRACTION,
+    seed:         int   = RANDOM_SEED,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Create a stratified train/validation split from the training DataFrame.
+
+    Stratification ensures every class appears in both sub-splits.
+    We use training data ONLY — the test CSV is never touched here.
+
+    Strategy:
+        For each class, sample val_fraction of its clips into val.
+        Remaining clips stay in train_sub.
+        With ~139 samples/class, 15% gives ~21 val samples per class.
+
+    Returns:
+        (train_sub_df, val_df)
+    """
+    rng           = np.random.default_rng(seed)
+    val_indices   = []
+    train_indices = []
+
+    for label, group in train_df.groupby("label"):
+        idx   = group.index.tolist()
+        n_val = max(1, int(len(idx) * val_fraction))
+        rng.shuffle(idx)
+        val_indices.extend(idx[:n_val])
+        train_indices.extend(idx[n_val:])
+
+    train_sub = train_df.loc[train_indices].reset_index(drop=True)
+    val_sub   = train_df.loc[val_indices].reset_index(drop=True)
+    return train_sub, val_sub
