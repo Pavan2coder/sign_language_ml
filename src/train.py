@@ -88,57 +88,32 @@ def make_train_val_split(train_df, val_fraction=VAL_FRACTION, seed=RANDOM_SEED):
             train_df.loc[val_idx].reset_index(drop=True))
 
 
-# ── Checkpointing ─────────────────────────────────────────────────────────────
-
-def _atomic_save(obj: dict, path: Path) -> None:
-    """Write to .tmp then rename — protects the previous checkpoint on crash."""
-    tmp = path.with_suffix(".tmp")
-    torch.save(obj, tmp)
-    tmp.replace(path)
+def _atomic_save(obj, path):
+    tmp = path.with_suffix(".tmp"); torch.save(obj, tmp); tmp.replace(path)
 
 
 def save_checkpoint(path, model, optimizer, scheduler, epoch,
                     best_val_loss, patience_counter, label_to_id, cfg):
-    """
-    Save a full resumable checkpoint.
-
-    Contents: model weights, optimizer state, scheduler state, completed
-    epoch, best_val_loss, patience_counter, label_to_id mapping,
-    training config dict, and all RNG states.
-    """
-    checkpoint = {
+    _atomic_save({
         "model_state_dict":     model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "scheduler_state_dict": scheduler.state_dict(),
-        "epoch":                epoch,
-        "best_val_loss":        best_val_loss,
-        "patience_counter":     patience_counter,
-        "label_to_id":          label_to_id,
-        "config":               cfg,
+        "epoch": epoch, "best_val_loss": best_val_loss,
+        "patience_counter": patience_counter, "label_to_id": label_to_id,
+        "config": cfg,
         "rng_state": {
-            "python": random.getstate(),
-            "numpy":  np.random.get_state(),
+            "python": random.getstate(), "numpy": np.random.get_state(),
             "torch":  torch.get_rng_state(),
             "cuda":   torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
         },
-    }
-    _atomic_save(checkpoint, path)
+    }, path)
 
 
 def load_checkpoint(path, model, optimizer, scheduler, device):
-    """
-    Restore model / optimizer / scheduler from a checkpoint.
-
-    RNG states are always loaded onto CPU regardless of target device.
-
-    Returns the full checkpoint dict so the caller can read epoch,
-    best_val_loss, patience_counter, and label_to_id.
-    """
     ckpt = torch.load(path, map_location=device, weights_only=False)
     model.load_state_dict(ckpt["model_state_dict"])
     optimizer.load_state_dict(ckpt["optimizer_state_dict"])
     scheduler.load_state_dict(ckpt["scheduler_state_dict"])
-
     rng = ckpt.get("rng_state", {})
     if rng.get("python"):  random.setstate(rng["python"])
     if rng.get("numpy"):   np.random.set_state(rng["numpy"])
@@ -149,3 +124,53 @@ def load_checkpoint(path, model, optimizer, scheduler, device):
         torch.cuda.set_rng_state_all(
             [s.cpu() if hasattr(s, "cpu") else s for s in rng["cuda"]])
     return ckpt
+
+
+# ── Per-epoch pass ────────────────────────────────────────────────────────────
+
+def run_epoch(model, loader, criterion, device, optimizer=None):
+    """
+    Run one pass over a DataLoader (train when optimizer is provided,
+    otherwise evaluate).
+
+    Returns (mean_loss, accuracy_percent).
+
+    Gradient clipping (max_norm=5.0) is applied during training to
+    prevent exploding gradients — a common issue with stacked GRUs.
+    """
+    is_train = optimizer is not None
+    model.train(is_train)
+    total_loss = total_correct = total_n = 0
+
+    ctx = torch.enable_grad() if is_train else torch.no_grad()
+    with ctx:
+        for bx, by in loader:
+            bx = bx.to(device, non_blocking=True)   # (B, T, 126)
+            by = by.to(device, non_blocking=True)   # (B,)
+            lengths = compute_seq_lengths(bx)
+            logits  = model(bx, lengths)             # (B, 500)
+            loss    = criterion(logits, by)
+
+            if is_train:
+                optimizer.zero_grad()
+                loss.backward()
+                nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+                optimizer.step()
+
+            total_loss    += loss.item() * len(by)
+            total_correct += (logits.argmax(1) == by).sum().item()
+            total_n       += len(by)
+
+    return total_loss / total_n, total_correct / total_n * 100.0
+
+
+# ── History CSV helper ────────────────────────────────────────────────────────
+
+def _append_history_row(csv_path: Path, row: dict) -> None:
+    """Append one epoch row to the training history CSV."""
+    write_header = not csv_path.exists()
+    with open(csv_path, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+        if write_header:
+            writer.writeheader()
+        writer.writerow(row)
