@@ -56,23 +56,23 @@ EXPECTED_LANDMARK_SHAPE = (NUM_HANDS, LANDMARKS_PER_HAND, COORDINATES)
 # PREPROCESSING CONFIGURATION
 # ============================================================
 
-# Fixed sequence length used by the preprocessor.
-#
 # Real frame counts in the dataset (measured on 200 samples):
 #   min=43, max=357, mean=136, median=130, p75=159, p90=182, p95=206, p99=268
-#
-# 150 is chosen because it:
-#   - sits above the median (130), so most clips need padding not truncation
-#   - truncates only the longest ~25 % of clips
-#   - keeps the input tensor small enough for efficient training
-#   - is easy to increase if a model needs more temporal context
-#
-# Change this value to experiment; the rest of the pipeline adapts automatically.
 MAX_SEQ_LEN: int = 150
 
 # Feature dimension per frame: flatten (2, 21, 3) -> 126 values.
-# This equals FEATURES_PER_FRAME and is here for explicit documentation.
 FEATURE_DIM: int = FEATURES_PER_FRAME  # 126
 
 # Number of sign classes discovered during dataset verification (Step 1).
 NUM_CLASSES: int = 500
+
+
+# ============================================================
+# TRAINING CONFIGURATION
+# ============================================================
+
+# Random seed for reproducibility across numpy, torch, and Python's random.
+RANDOM_SEED: int = 42
+
+# Fraction of training data held out for validation (stratified by class).
+VAL_FRACTION: float = 0.15
