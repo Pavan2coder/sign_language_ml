@@ -1,22 +1,15 @@
 """
 train.py
 ========
-STEP 5 of the ISL Sign Language Recognition ML Pipeline:
-GRU-based sequence classifier with full training loop.
+STEP 5 — GRU-based sequence classifier with full training loop.
 
-Usage
------
-python src/train.py --check
-python src/train.py --smoke
-python src/train.py
-python src/train.py --resume
-python src/train.py --epochs 30 --batch-size 32 --lr 1e-3
+Usage:  python src/train.py [--check | --smoke | --resume]
+        python src/train.py --epochs 30 --batch-size 32 --lr 1e-3
 """
 
 import argparse
 import csv
 import json
-import os
 import random
 import signal
 import sys
@@ -42,8 +35,7 @@ from src.config import (
     MAX_SEQ_LEN, FEATURE_DIM, NUM_CLASSES,
     RANDOM_SEED, VAL_FRACTION,
     DEFAULT_EPOCHS, DEFAULT_BATCH_SIZE, DEFAULT_LR, DEFAULT_WEIGHT_DECAY,
-    PATIENCE,
-    GRU_HIDDEN_SIZE, GRU_NUM_LAYERS, GRU_DROPOUT, FC_HIDDEN_SIZE,
+    PATIENCE, GRU_HIDDEN_SIZE, GRU_NUM_LAYERS, GRU_DROPOUT, FC_HIDDEN_SIZE,
 )
 from src.data_loader        import load_mapping
 from src.preprocessing      import build_label_encoder
@@ -56,45 +48,97 @@ except ImportError:
     HAS_TQDM = False
 
 
-# ── Reproducibility ───────────────────────────────────────────────────────────
-
 def set_seeds(seed: int) -> None:
-    """Set all random seeds for reproducible results."""
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
+    random.seed(seed); np.random.seed(seed); torch.manual_seed(seed)
+    if torch.cuda.is_available(): torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark     = False
 
 
-# ── Device selection ──────────────────────────────────────────────────────────
-
 def get_device(require_cuda: bool = False) -> torch.device:
-    """
-    Select computation device and print GPU details.
-
-    Args:
-        require_cuda : raise RuntimeError if CUDA is unavailable.
-
-    Returns:
-        torch.device — cuda:0 or cpu.
-    """
     if torch.cuda.is_available():
         device = torch.device("cuda:0")
-        props  = torch.cuda.get_device_properties(0)
-        print(f"[device] GPU        : {props.name}")
-        print(f"[device] VRAM       : {props.total_memory / 1024**3:.1f} GB")
-        print(f"[device] CUDA SM    : {props.major}.{props.minor}")
-        print(f"[device] PyTorch    : {torch.__version__}")
+        p = torch.cuda.get_device_properties(0)
+        print(f"[device] GPU: {p.name}  VRAM: {p.total_memory/1024**3:.1f} GB  SM: {p.major}.{p.minor}")
     else:
         if require_cuda:
-            raise RuntimeError(
-                "CUDA not available but --require-cuda was set.\n"
-                "Install:  pip install torch "
-                "--index-url https://download.pytorch.org/whl/cu128"
-            )
+            raise RuntimeError("CUDA not available. Install torch with cu128 wheel.")
         device = torch.device("cpu")
-        print("[device] CUDA not available — using CPU (training will be slow).")
+        print("[device] CUDA unavailable — using CPU.")
     return device
+
+
+# ── GRUClassifier ─────────────────────────────────────────────────────────────
+
+class GRUClassifier(nn.Module):
+    """
+    Stacked GRU sequence classifier for ISL500.
+
+    Architecture:
+        GRU(input=126, hidden=256, layers=2, dropout=0.3)
+            -> last hidden state h_n[-1]  shape (batch, 256)
+        LayerNorm(256)
+        Linear(256, 256) -> ReLU -> Dropout(0.3)
+        Linear(256, 500)
+        -> raw logits  (batch, 500)
+
+    When sequence lengths are provided the GRU uses PackedSequence
+    so padding frames never influence the hidden state.
+    """
+
+    def __init__(
+        self,
+        input_size:  int   = FEATURE_DIM,
+        hidden_size: int   = GRU_HIDDEN_SIZE,
+        num_layers:  int   = GRU_NUM_LAYERS,
+        num_classes: int   = NUM_CLASSES,
+        dropout:     float = GRU_DROPOUT,
+        fc_hidden:   int   = FC_HIDDEN_SIZE,
+    ) -> None:
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_layers  = num_layers
+
+        gru_drop = dropout if num_layers > 1 else 0.0
+        self.gru = nn.GRU(
+            input_size  = input_size,
+            hidden_size = hidden_size,
+            num_layers  = num_layers,
+            batch_first = True,
+            dropout     = gru_drop,
+        )
+        self.head = nn.Sequential(
+            nn.LayerNorm(hidden_size),
+            nn.Linear(hidden_size, fc_hidden),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout),
+            nn.Linear(fc_hidden, num_classes),
+        )
+
+    def forward(
+        self,
+        x:       torch.Tensor,
+        lengths: Optional[torch.LongTensor] = None,
+    ) -> torch.Tensor:
+        """
+        Args:
+            x       : (batch, seq_len, 126) padded sequences.
+            lengths : (batch,) real sequence lengths; enables PackedSequence.
+
+        Returns:
+            logits  : (batch, num_classes)
+        """
+        if lengths is not None:
+            lengths_cpu   = lengths.clamp(min=1, max=x.size(1)).cpu()
+            sorted_len, sort_idx = lengths_cpu.sort(descending=True)
+            packed = nn.utils.rnn.pack_padded_sequence(
+                x[sort_idx], sorted_len, batch_first=True, enforce_sorted=True
+            )
+            _, h_n = self.gru(packed)
+            _, unsort = sort_idx.sort()
+            h_last = h_n[-1][unsort]
+        else:
+            _, h_n = self.gru(x)
+            h_last = h_n[-1]
+
+        return self.head(h_last)
