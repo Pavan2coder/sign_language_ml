@@ -37,8 +37,6 @@ except ImportError:
     HAS_TQDM = False
 
 
-# ── Utilities ─────────────────────────────────────────────────────────────────
-
 def set_seeds(seed):
     random.seed(seed); np.random.seed(seed); torch.manual_seed(seed)
     if torch.cuda.is_available(): torch.cuda.manual_seed_all(seed)
@@ -54,8 +52,6 @@ def get_device(require_cuda=False):
     if require_cuda: raise RuntimeError("CUDA not available.")
     print("[device] CPU mode."); return torch.device("cpu")
 
-
-# ── Model ─────────────────────────────────────────────────────────────────────
 
 class GRUClassifier(nn.Module):
     """2-layer GRU + LayerNorm head. Input (B,150,126) -> logits (B,500)."""
@@ -85,10 +81,7 @@ class GRUClassifier(nn.Module):
         return self.head(h_last)
 
 
-# ── Data split ────────────────────────────────────────────────────────────────
-
 def make_train_val_split(train_df, val_fraction=VAL_FRACTION, seed=RANDOM_SEED):
-    """Stratified 85/15 split — uses training data only, never touches test."""
     rng = np.random.default_rng(seed)
     val_idx, tr_idx = [], []
     for _, group in train_df.groupby("label"):
@@ -98,15 +91,12 @@ def make_train_val_split(train_df, val_fraction=VAL_FRACTION, seed=RANDOM_SEED):
             train_df.loc[val_idx].reset_index(drop=True))
 
 
-# ── Checkpointing ─────────────────────────────────────────────────────────────
-
 def _atomic_save(obj, path):
     tmp = path.with_suffix(".tmp"); torch.save(obj, tmp); tmp.replace(path)
 
 
 def save_checkpoint(path, model, optimizer, scheduler, epoch,
                     best_val_loss, patience_counter, label_to_id, cfg):
-    """Atomically save full training state including RNG for exact resume."""
     _atomic_save({
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
@@ -123,7 +113,6 @@ def save_checkpoint(path, model, optimizer, scheduler, epoch,
 
 
 def load_checkpoint(path, model, optimizer, scheduler, device):
-    """Restore model/optimizer/scheduler; always loads RNG states on CPU."""
     ckpt = torch.load(path, map_location=device, weights_only=False)
     model.load_state_dict(ckpt["model_state_dict"])
     optimizer.load_state_dict(ckpt["optimizer_state_dict"])
@@ -140,10 +129,7 @@ def load_checkpoint(path, model, optimizer, scheduler, device):
     return ckpt
 
 
-# ── Epoch loop ────────────────────────────────────────────────────────────────
-
 def run_epoch(model, loader, criterion, device, optimizer=None):
-    """Train (optimizer provided) or evaluate. Returns (mean_loss, acc%)."""
     is_train = optimizer is not None
     model.train(is_train)
     total_loss = total_correct = total_n = 0
@@ -172,21 +158,12 @@ def _append_history_row(csv_path, row):
         w.writerow(row)
 
 
-# ── Full training function ────────────────────────────────────────────────────
-
 def train(
     epochs=DEFAULT_EPOCHS, batch_size=DEFAULT_BATCH_SIZE,
     lr=DEFAULT_LR, weight_decay=DEFAULT_WEIGHT_DECAY,
     resume=False, smoke=False,
 ):
-    """
-    Full training loop — setup, data, model, epoch loop, checkpointing.
-
-    Validation split comes from training data only (15%).
-    Test CSV is never loaded here.
-    Checkpoints written atomically after every epoch.
-    Ctrl+C saves a checkpoint before exiting.
-    """
+    """Full training loop with lazy HDF5 loading, checkpointing, early stopping."""
     set_seeds(RANDOM_SEED)
     device = get_device()
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
@@ -199,7 +176,6 @@ def train(
     if smoke: print("  [SMOKE TEST MODE] — 2 epochs, 200 samples")
     print(f"  epochs={epochs}  batch={batch_size}  lr={lr}  device={device}\n")
 
-    # Load data
     print("[1] Loading train mapping...")
     train_df = load_mapping("train")
     print(f"    Total: {len(train_df):,}")
@@ -237,8 +213,7 @@ def train(
     start_epoch = 0; best_val_loss = float("inf"); patience_counter = 0
     history_csv = REPORT_DIR / HISTORY_CSV_NAME
     latest_ckpt = CHECKPOINT_DIR / LATEST_CKPT_NAME
-
-    train_cfg = {
+    train_cfg   = {
         "epochs": epochs, "batch_size": batch_size, "lr": lr,
         "weight_decay": weight_decay, "max_seq_len": MAX_SEQ_LEN,
         "feature_dim": FEATURE_DIM, "num_classes": NUM_CLASSES,
@@ -261,42 +236,31 @@ def train(
     else:
         print("[6] Fresh training run")
 
-    lm_path = CHECKPOINT_DIR / LABEL_MAP_NAME
-    with open(lm_path, "w") as f:
+    with open(CHECKPOINT_DIR / LABEL_MAP_NAME, "w") as f:
         json.dump(label_to_id, f, indent=2)
-    print(f"    Label map: {lm_path}")
 
-    # ── Ctrl+C handler ─────────────────────────────────────────────────────────
     interrupted = False
     def _sigint(sig, frame):
         nonlocal interrupted
-        print("\n\n[!] Ctrl+C — saving checkpoint and exiting...")
-        interrupted = True
+        print("\n[!] Ctrl+C — saving checkpoint..."); interrupted = True
     signal.signal(signal.SIGINT, _sigint)
 
-    # ── Epoch loop ─────────────────────────────────────────────────────────────
     print(f"\n{'='*60}")
     print(f"  Epochs {start_epoch+1} to {epochs}  |  patience={PATIENCE}")
     print(f"{'='*60}\n")
 
     for epoch in range(start_epoch, epochs):
-        if interrupted:
-            break
-
+        if interrupted: break
         t0 = time.time()
         train_loss, train_acc = run_epoch(model, train_loader, criterion, device, optimizer)
-
-        if interrupted:
-            break
-
+        if interrupted: break
         val_loss, val_acc = run_epoch(model, val_loader, criterion, device)
         scheduler.step(val_loss)
         current_lr = optimizer.param_groups[0]["lr"]
 
         mem_str = ""
         if torch.cuda.is_available():
-            mem_mb = torch.cuda.memory_reserved(0) / 1024**2
-            mem_str = f"  GPU {mem_mb:.0f} MB"
+            mem_str = f"  GPU {torch.cuda.memory_reserved(0)/1024**2:.0f}MB"
 
         elapsed = time.time() - t0
         print(
@@ -305,7 +269,6 @@ def train(
             f"  |  val_loss {val_loss:.4f}  val_acc {val_acc:.1f}%"
             f"  |  lr {current_lr:.2e}  {elapsed:.1f}s{mem_str}"
         )
-
         _append_history_row(history_csv, {
             "epoch": epoch+1, "train_loss": round(train_loss,6),
             "train_acc": round(train_acc,4), "val_loss": round(val_loss,6),
@@ -313,37 +276,87 @@ def train(
             "epoch_time": round(elapsed,2),
         })
 
-        # Best checkpoint
         if val_loss < best_val_loss:
-            best_val_loss    = val_loss
-            patience_counter = 0
-            best_path = CHECKPOINT_DIR / BEST_CKPT_NAME
-            save_checkpoint(best_path, model, optimizer, scheduler, epoch,
-                            best_val_loss, patience_counter, label_to_id, train_cfg)
+            best_val_loss = val_loss; patience_counter = 0
+            save_checkpoint(CHECKPOINT_DIR/BEST_CKPT_NAME, model, optimizer,
+                            scheduler, epoch, best_val_loss, patience_counter,
+                            label_to_id, train_cfg)
             print(f"  -> Best model (val_loss={best_val_loss:.4f})")
         else:
             patience_counter += 1
 
-        # Latest (resumable) checkpoint
         save_checkpoint(latest_ckpt, model, optimizer, scheduler, epoch,
                         best_val_loss, patience_counter, label_to_id, train_cfg)
 
-        # Early stopping
         if patience_counter >= PATIENCE:
             print(f"\n[Early stopping] No improvement for {PATIENCE} epochs.")
             break
 
-    # ── Wrap up ────────────────────────────────────────────────────────────────
     if interrupted:
         save_checkpoint(latest_ckpt, model, optimizer, scheduler,
                         epoch, best_val_loss, patience_counter, label_to_id, train_cfg)
-        print(f"\n[!] Checkpoint saved: {latest_ckpt}")
-        print("    Resume:  python src/train.py --resume")
+        print(f"\n[!] Saved: {latest_ckpt}")
+        print("    Resume: python src/train.py --resume")
     else:
         print(f"\n{'='*60}")
-        print("  Training complete.")
-        print(f"  Best val loss : {best_val_loss:.4f}")
-        print(f"  History CSV   : {history_csv}")
-        print(f"  Best ckpt     : {CHECKPOINT_DIR / BEST_CKPT_NAME}")
-        print(f"  Evaluate with : python src/evaluate.py")
+        print(f"  Done. Best val loss: {best_val_loss:.4f}")
+        print(f"  History  : {history_csv}")
+        print(f"  Best ckpt: {CHECKPOINT_DIR/BEST_CKPT_NAME}")
+        print(f"  Evaluate : python src/evaluate.py")
         print(f"{'='*60}")
+
+
+# ── Environment check ─────────────────────────────────────────────────────────
+
+def check_environment():
+    """Print Python / PyTorch / CUDA health report."""
+    import platform
+    print("=" * 55)
+    print("  Environment Check")
+    print("=" * 55)
+    print(f"  Python    : {sys.version.split()[0]}")
+    print(f"  Platform  : {platform.platform()}")
+    print(f"  PyTorch   : {torch.__version__}")
+    print(f"  CUDA      : {torch.version.cuda}")
+    print(f"  Available : {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        p   = torch.cuda.get_device_properties(0)
+        mem = torch.cuda.memory_reserved(0) / 1024**3
+        print(f"  GPU       : {p.name}")
+        print(f"  SM        : {p.major}.{p.minor}")
+        print(f"  VRAM      : {p.total_memory/1024**3:.1f} GB  reserved: {mem:.2f} GB")
+        x = torch.randn(4, MAX_SEQ_LEN, FEATURE_DIM, device="cuda:0")
+        print(f"  Tensor    : {x.shape} on {x.device}  OK")
+        del x; torch.cuda.empty_cache()
+    else:
+        print("  WARNING: CUDA not available — training will use CPU.")
+    print("=" * 55)
+
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
+
+def parse_args():
+    p = argparse.ArgumentParser(description="ISL500 GRU Training")
+    p.add_argument("--check",    action="store_true", help="Environment/CUDA check")
+    p.add_argument("--smoke",    action="store_true", help="2-epoch GPU smoke test")
+    p.add_argument("--resume",   action="store_true", help="Resume from latest checkpoint")
+    p.add_argument("--epochs",   type=int,   default=DEFAULT_EPOCHS)
+    p.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE, dest="batch_size")
+    p.add_argument("--lr",       type=float, default=DEFAULT_LR)
+    p.add_argument("--weight-decay", type=float, default=DEFAULT_WEIGHT_DECAY, dest="weight_decay")
+    return p.parse_args()
+
+
+if __name__ == "__main__":
+    args = parse_args()
+    if args.check:
+        check_environment()
+        sys.exit(0)
+    train(
+        epochs       = args.epochs,
+        batch_size   = args.batch_size,
+        lr           = args.lr,
+        weight_decay = args.weight_decay,
+        resume       = args.resume,
+        smoke        = args.smoke,
+    )
