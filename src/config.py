@@ -56,11 +56,18 @@ NUM_CLASSES: int  = 500
 RANDOM_SEED:   int   = 42
 VAL_FRACTION:  float = 0.15
 
-# Default hyperparameters — all overridable from the CLI in train.py
 DEFAULT_EPOCHS:       int   = 30
-DEFAULT_BATCH_SIZE:   int   = 32    # safe for 8 GB VRAM with (32, 150, 126)
+DEFAULT_BATCH_SIZE:   int   = 32
 DEFAULT_LR:           float = 1e-3
 DEFAULT_WEIGHT_DECAY: float = 1e-4
+PATIENCE:             int   = 5
 
-# Early stopping: halt if val_loss does not improve for this many epochs
-PATIENCE: int = 5
+# GRU model architecture
+# input  : (batch, MAX_SEQ_LEN=150, FEATURE_DIM=126)
+# GRU    : GRU_NUM_LAYERS stacked layers, hidden=GRU_HIDDEN_SIZE
+# head   : LayerNorm -> Linear(GRU_HIDDEN_SIZE, FC_HIDDEN_SIZE) -> ReLU
+#          -> Dropout -> Linear(FC_HIDDEN_SIZE, NUM_CLASSES)
+GRU_HIDDEN_SIZE: int   = 256   # hidden units per GRU layer
+GRU_NUM_LAYERS:  int   = 2     # stacked layers
+GRU_DROPOUT:     float = 0.3   # dropout between layers (ignored if layers=1)
+FC_HIDDEN_SIZE:  int   = 256   # fully-connected head hidden dimension
