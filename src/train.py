@@ -6,25 +6,11 @@ GRU-based sequence classifier with full training loop.
 
 Usage
 -----
-python src/train.py --check          # environment / CUDA check
-python src/train.py --smoke          # 2-epoch GPU smoke test
-python src/train.py                  # full training (30 epochs)
-python src/train.py --resume         # resume from latest checkpoint
+python src/train.py --check
+python src/train.py --smoke
+python src/train.py
+python src/train.py --resume
 python src/train.py --epochs 30 --batch-size 32 --lr 1e-3
-
-Model
------
-GRUClassifier:
-  Input  : (batch, 150, 126)
-  GRU    : 2 stacked layers, hidden=256, dropout=0.3
-  Head   : LayerNorm -> Linear(256,256) -> ReLU -> Dropout -> Linear(256,500)
-  Output : (batch, 500) logits
-
-Checkpoints
------------
-latest_checkpoint.pt  — saved after every epoch (for resume)
-best_model.pt         — saved when val_loss improves (for evaluation)
-Both are written atomically: temp file -> rename.
 """
 
 import argparse
@@ -36,7 +22,7 @@ import signal
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -68,3 +54,47 @@ try:
     HAS_TQDM = True
 except ImportError:
     HAS_TQDM = False
+
+
+# ── Reproducibility ───────────────────────────────────────────────────────────
+
+def set_seeds(seed: int) -> None:
+    """Set all random seeds for reproducible results."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark     = False
+
+
+# ── Device selection ──────────────────────────────────────────────────────────
+
+def get_device(require_cuda: bool = False) -> torch.device:
+    """
+    Select computation device and print GPU details.
+
+    Args:
+        require_cuda : raise RuntimeError if CUDA is unavailable.
+
+    Returns:
+        torch.device — cuda:0 or cpu.
+    """
+    if torch.cuda.is_available():
+        device = torch.device("cuda:0")
+        props  = torch.cuda.get_device_properties(0)
+        print(f"[device] GPU        : {props.name}")
+        print(f"[device] VRAM       : {props.total_memory / 1024**3:.1f} GB")
+        print(f"[device] CUDA SM    : {props.major}.{props.minor}")
+        print(f"[device] PyTorch    : {torch.__version__}")
+    else:
+        if require_cuda:
+            raise RuntimeError(
+                "CUDA not available but --require-cuda was set.\n"
+                "Install:  pip install torch "
+                "--index-url https://download.pytorch.org/whl/cu128"
+            )
+        device = torch.device("cpu")
+        print("[device] CUDA not available — using CPU (training will be slow).")
+    return device
