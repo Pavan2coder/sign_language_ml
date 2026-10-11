@@ -14,3 +14,13 @@ torch
 
 # Progress bars in training loops
 tqdm
+
+# FastAPI inference backend
+fastapi
+uvicorn[standard]
+pydantic
+requests
+
+# Real-time computer vision & landmark extraction
+opencv-python
+mediapipe
