@@ -1,0 +1,21 @@
+{
+  "checkpoint": "C:\\Users\\sripa\\OneDrive\\Desktop\\sign-lan\\models\\checkpoints\\best_model.pt",
+  "epoch": 15,
+  "best_val_loss_at_training": 0.43162307416716006,
+  "num_classes": 500,
+  "total_mapping_samples": 17256,
+  "evaluated_samples": 17256,
+  "excluded_samples_count": 0,
+  "excluded_samples": [],
+  "test_loss": 0.384531,
+  "test_accuracy": 90.4381,
+  "top1_accuracy": 90.4381,
+  "top5_accuracy": 98.783,
+  "macro_f1": 0.902794,
+  "weighted_f1": 0.902834,
+  "macro_precision": 0.908747,
+  "weighted_precision": 0.909261,
+  "macro_recall": 0.904678,
+  "weighted_recall": 0.904381,
+  "elapsed_seconds": 25.6
+}
