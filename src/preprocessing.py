@@ -246,11 +246,12 @@ def normalize_landmarks(data: np.ndarray) -> np.ndarray:
         dists   = np.linalg.norm(pf, axis=-1)        # (n_present, 21)
         scale   = dists.max(axis=-1, keepdims=True)   # (n_present, 1)
 
-        # The probe confirmed scale > 0 for all present frames,
-        # but we guard anyway to be safe
-        scale   = np.where(scale == 0.0, 1.0, scale)
+        # Epsilon guard against degenerate / collapsed hand landmarks
+        # (e.g., all 21 points identical or spread < 1e-6)
+        scale   = np.where(scale < 1e-6, 1.0, scale)
 
         pf      = pf / scale[:, np.newaxis, :]        # normalise
+        pf      = np.nan_to_num(pf, nan=0.0, posinf=0.0, neginf=0.0)
 
         # Write back into the output array
         out[present, h, :, :] = pf
