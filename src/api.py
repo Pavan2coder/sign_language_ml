@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 import torch
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -148,6 +148,13 @@ class PredictResponse(BaseModel):
     )
 
 
+class FilePredictResponse(PredictResponse):
+    file_metadata: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Metadata extracted from the uploaded archive (filename, format, ground truth label).",
+    )
+
+
 class HealthResponse(BaseModel):
     model_config = {"protected_namespaces": ()}
 
@@ -168,6 +175,19 @@ class RootResponse(BaseModel):
     docs_url: str
     health_url: str
     predict_url: str
+    predict_file_url: str
+    labels_url: str
+
+
+class LabelsResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    isl500_count: int
+    custom_count: int
+    custom_model_loaded: bool
+    routing_threshold: float
+    isl500_labels: List[str]
+    custom_labels: List[str]
 
 
 # ── Global Exception Handlers ─────────────────────────────────────────────────
@@ -194,6 +214,8 @@ async def root():
         docs_url="/docs",
         health_url="/health",
         predict_url="/predict",
+        predict_file_url="/predict/file",
+        labels_url="/labels",
     )
 
 
@@ -229,6 +251,55 @@ async def health():
         custom_model_loaded=predictor.has_custom_model,
         custom_classes=predictor.custom_predictor.num_classes if predictor.has_custom_model else None,
     )
+
+
+@app.get("/labels", response_model=LabelsResponse, tags=["Vocabulary"])
+async def get_labels(recognizer: Optional[str] = "all"):
+    """
+    List supported gesture labels across ISL500 and Custom vocabularies.
+
+    Query params:
+      - recognizer: 'all' (default), 'isl500', or 'custom'.
+    """
+    if predictor is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Inference model is not loaded or is currently unavailable.",
+        )
+
+    isl_labels = list(predictor.isl500_predictor.label_to_id.keys())
+    custom_labels = []
+    if predictor.has_custom_model and predictor.custom_predictor is not None:
+        custom_labels = list(predictor.custom_predictor.label_to_id.keys())
+
+    rec = (recognizer or "all").lower().strip()
+    if rec == "isl500":
+        return LabelsResponse(
+            isl500_count=len(isl_labels),
+            custom_count=0,
+            custom_model_loaded=predictor.has_custom_model,
+            routing_threshold=predictor.custom_threshold,
+            isl500_labels=sorted(isl_labels),
+            custom_labels=[],
+        )
+    elif rec == "custom":
+        return LabelsResponse(
+            isl500_count=0,
+            custom_count=len(custom_labels),
+            custom_model_loaded=predictor.has_custom_model,
+            routing_threshold=predictor.custom_threshold,
+            isl500_labels=[],
+            custom_labels=sorted(custom_labels),
+        )
+    else:
+        return LabelsResponse(
+            isl500_count=len(isl_labels),
+            custom_count=len(custom_labels),
+            custom_model_loaded=predictor.has_custom_model,
+            routing_threshold=predictor.custom_threshold,
+            isl500_labels=sorted(isl_labels),
+            custom_labels=sorted(custom_labels),
+        )
 
 
 @app.post("/predict", response_model=PredictResponse, tags=["Inference"])
@@ -318,6 +389,61 @@ async def predict_gesture(request: PredictRequest):
         )
 
     return PredictResponse(**result)
+
+
+@app.post("/predict/file", response_model=FilePredictResponse, tags=["Inference"])
+async def predict_landmark_file(
+    file: UploadFile = File(..., description="Landmark file archive (.npz or .h5)"),
+    top_k: int = Form(default=5),
+    recognizer: str = Form(default="hybrid"),
+):
+    """
+    Directly classify an uploaded landmark file (.npz or .h5) using ISL models.
+
+    Allows rapid testing from Swagger UI, cURL, or client applications without
+    manually converting landmarks into nested JSON arrays.
+    """
+    if predictor is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Inference model is not loaded or is currently unavailable.",
+        )
+
+    filename = file.filename or "uploaded_file"
+    suffix = Path(filename).suffix.lower()
+    if suffix not in (".npz", ".h5", ".hdf5"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported file format '{suffix}'. Supported formats are .npz, .h5, .hdf5",
+        )
+
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+        content = await file.read()
+        tmp.write(content)
+
+    try:
+        result = predictor.predict_file(tmp_path, top_k=top_k, mode=recognizer)
+        if "file_metadata" in result:
+            result["file_metadata"]["filename"] = filename
+        return FilePredictResponse(**result)
+    except (ValueError, KeyError) as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Failed to process landmark file: {e}",
+        )
+    except Exception as e:
+        logger.error(f"File inference execution error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Inference failed on uploaded file: {e}",
+        )
+    finally:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
