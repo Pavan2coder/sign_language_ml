@@ -10,11 +10,13 @@ load_mapping(split)       -> pd.DataFrame
 get_label_from_path(path) -> str
 load_h5_file(path)        -> np.ndarray  shape (frames, 2, 21, 3)
 load_sample(path, label)  -> (np.ndarray, str)
+load_landmark_file(path)  -> (np.ndarray, dict)  shape (frames, 2, 21, 3)
 """
 
+import json
 import sys
 from pathlib import Path
-from typing import Tuple
+from typing import Any, Dict, Optional, Tuple, Union
 
 import h5py
 import numpy as np
@@ -158,6 +160,74 @@ def load_sample(path: Path, label: str) -> Tuple[np.ndarray, str]:
         (data, label) where data is float32 shape (frames, 2, 21, 3).
     """
     return load_h5_file(path), label
+
+
+# ── load_landmark_file ────────────────────────────────────────────────────────
+
+def load_landmark_file(path: Union[str, Path]) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """
+    Unified loader for both ISL500 (.h5) and Custom Recording (.npz) landmark files.
+
+    Returns:
+        landmarks : np.ndarray, dtype float32, shape (frames, 2, 21, 3)
+        metadata  : Dict containing file metadata, inferred label, and recording details.
+
+    Raises:
+        FileNotFoundError — file not found on disk
+        ValueError        — unsupported extension or invalid landmark dimensions
+    """
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"Landmark file not found: {p}")
+
+    suffix = p.suffix.lower()
+    meta: Dict[str, Any] = {
+        "file_path": str(p.resolve()),
+        "filename": p.name,
+        "format": suffix,
+    }
+
+    if suffix in (".h5", ".hdf5"):
+        data = load_h5_file(p)
+        try:
+            meta["label"] = get_label_from_path(p)
+        except Exception:
+            meta["label"] = None
+        meta["frame_count"] = len(data)
+        return data, meta
+
+    elif suffix == ".npz":
+        with np.load(p, allow_pickle=True) as archive:
+            key = "landmarks" if "landmarks" in archive else ("data" if "data" in archive else archive.files[0])
+            raw_arr = archive[key].astype(np.float32)
+
+            if "metadata_json" in archive:
+                try:
+                    custom_meta = json.loads(str(archive["metadata_json"]))
+                    meta.update(custom_meta)
+                except Exception:
+                    pass
+            for k in archive.files:
+                if k not in (key, "metadata_json") and k not in meta:
+                    try:
+                        meta[k] = archive[k].item() if archive[k].ndim == 0 else archive[k].tolist()
+                    except Exception:
+                        pass
+
+        # Validate shape: must be (frames, 2, 21, 3)
+        if raw_arr.ndim != 4 or raw_arr.shape[1:] != EXPECTED_LANDMARK_SHAPE:
+            raise ValueError(
+                f"Invalid landmark shape {raw_arr.shape} in {p}. "
+                f"Expected (frames, 2, 21, 3)."
+            )
+        meta["frame_count"] = len(raw_arr)
+        return raw_arr, meta
+
+    else:
+        raise ValueError(
+            f"Unsupported landmark file format '{suffix}' for {p}. "
+            "Supported formats: .h5, .hdf5, .npz"
+        )
 
 
 # ── self-test ─────────────────────────────────────────────────────────────────
