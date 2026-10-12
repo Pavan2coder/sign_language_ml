@@ -225,6 +225,80 @@ def load_custom_sample(npz_path: Path) -> Tuple[np.ndarray, Dict[str, Any]]:
     return landmarks, meta
 
 
+def print_dataset_status(data_dir: Optional[Path] = None, target_reps: int = 10) -> None:
+    """
+    Print a summary table of all recorded custom vocabulary samples.
+    """
+    target_dir = Path(data_dir) if data_dir else CUSTOM_RAW_DIR
+    target_dir.mkdir(parents=True, exist_ok=True)
+    npz_files = sorted(list(target_dir.glob("*.npz")))
+
+    print("\n" + "=" * 70)
+    print("  Custom Vocabulary Recording Status Report")
+    print("=" * 70)
+    print(f"  Directory: {target_dir}")
+    print(f"  Total .npz Archive Files Found: {len(npz_files)}")
+    print("-" * 70)
+
+    if not npz_files:
+        print("  No custom recordings found yet.")
+        print(f"  Target Vocabulary ({len(CUSTOM_TARGET_LABELS)} classes):")
+        for idx, lbl in enumerate(CUSTOM_TARGET_LABELS, 1):
+            print(f"    {idx}. {lbl:<22} : 0 / {target_reps} reps  [MISSING]")
+        print("\n  Start recording with:")
+        print("    python src/record_custom.py --label Bye --signer signer01 --reps 10")
+        print("=" * 70 + "\n")
+        return
+
+    # Parse metadata from files
+    class_data: Dict[str, List[Dict[str, Any]]] = {}
+    signer_counts: Dict[str, int] = {}
+
+    for p in npz_files:
+        try:
+            with np.load(p, allow_pickle=False) as d:
+                meta = json.loads(str(d["metadata_json"]))
+                lbl = meta.get("label", "Unknown")
+                sgn = meta.get("signer", "Unknown")
+                class_data.setdefault(lbl, []).append(meta)
+                signer_counts[sgn] = signer_counts.get(sgn, 0) + 1
+        except Exception as e:
+            logger.warning(f"Failed to read {p.name}: {e}")
+
+    # Combine target labels with any extra recorded labels
+    all_labels = sorted(list(set(CUSTOM_TARGET_LABELS) | set(class_data.keys())))
+
+    print(f"  {'Sign Label':<24} {'Count':<8} {'Target':<8} {'Signers':<18} {'Status'}")
+    print("  " + "-" * 66)
+
+    ready_count = 0
+    for lbl in all_labels:
+        samples = class_data.get(lbl, [])
+        cnt = len(samples)
+        signers = sorted(list(set(s.get("signer", "Unknown") for s in samples)))
+        signers_str = ", ".join(signers) if signers else "None"
+        if len(signers_str) > 16:
+            signers_str = signers_str[:13] + "..."
+
+        if cnt >= target_reps:
+            status = "[COMPLETE]"
+            ready_count += 1
+        elif cnt >= 3:
+            status = f"[READY ({cnt}/{target_reps})]"
+            ready_count += 1
+        elif cnt > 0:
+            status = f"[LOW DATA ({cnt}/{target_reps})]"
+        else:
+            status = "[MISSING]"
+
+        print(f"  {lbl:<24} {cnt:<8} {target_reps:<8} {signers_str:<18} {status}")
+
+    print("  " + "-" * 66)
+    print(f"  Signers active : {dict(signer_counts)}")
+    print(f"  Classes ready  : {ready_count}/{len(all_labels)}")
+    print("=" * 70 + "\n")
+
+
 # ── Interactive Recording Session ─────────────────────────────────────────────
 
 def run_recorder(
@@ -635,6 +709,11 @@ def parse_args():
         action="store_true",
         help="Print list of target custom labels and exit",
     )
+    parser.add_argument(
+        "--status",
+        action="store_true",
+        help="Print summary table of recorded custom vocabulary samples and exit",
+    )
     return parser.parse_args()
 
 
@@ -645,6 +724,10 @@ if __name__ == "__main__":
         for idx, lbl in enumerate(CUSTOM_TARGET_LABELS, 1):
             print(f"  {idx}. {lbl}")
         print()
+        sys.exit(0)
+
+    if args.status:
+        print_dataset_status(data_dir=args.output_dir, target_reps=args.reps)
         sys.exit(0)
 
     run_recorder(
