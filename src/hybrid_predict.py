@@ -286,6 +286,64 @@ class HybridSignPredictor:
         else:
             raise ValueError(f"Unknown mode '{mode}'. Expected 'isl500', 'custom', or 'hybrid'.")
 
+    def predict_file(
+        self,
+        file_path: Union[str, Path],
+        top_k: int = 5,
+        mode: str = "hybrid",
+    ) -> Dict[str, Any]:
+        """
+        Run inference directly on a stored .npz (custom) or .h5 (ISL500) landmark file.
+
+        Args:
+            file_path: Path to the landmark file (.npz or .h5/.hdf5).
+            top_k: Number of candidate classes to return.
+            mode: Routing mode ('isl500', 'custom', or 'hybrid').
+
+        Returns:
+            Dict containing prediction results augmented with file metadata.
+        """
+        path = Path(file_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Landmark file not found: {path}")
+
+        meta: Dict[str, Any] = {
+            "source_file": str(path.resolve()),
+            "filename": path.name,
+            "file_format": path.suffix.lower(),
+        }
+
+        if path.suffix.lower() == ".npz":
+            try:
+                from src.record_custom import load_custom_sample
+                landmarks, custom_meta = load_custom_sample(path)
+                meta["custom_metadata"] = custom_meta
+                if "label" in custom_meta:
+                    meta["ground_truth_label"] = custom_meta["label"]
+            except Exception:
+                with np.load(path, allow_pickle=True) as npz:
+                    key = "landmarks" if "landmarks" in npz else ("data" if "data" in npz else npz.files[0])
+                    landmarks = npz[key].astype(np.float32)
+                    if "label" in npz:
+                        meta["ground_truth_label"] = str(npz["label"])
+        elif path.suffix.lower() in (".h5", ".hdf5"):
+            from src.data_loader import load_h5_file
+            landmarks = load_h5_file(path)
+            try:
+                from src.data_loader import get_label_from_path
+                meta["ground_truth_label"] = get_label_from_path(path)
+            except Exception:
+                pass
+        else:
+            raise ValueError(
+                f"Unsupported landmark file format '{path.suffix}'. "
+                "Supported formats: .npz, .h5, .hdf5"
+            )
+
+        res = self.predict(landmarks, top_k=top_k, mode=mode)
+        res["file_metadata"] = meta
+        return res
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Hybrid ISL Sign Recognition Test")
@@ -323,17 +381,10 @@ if __name__ == "__main__":
     print("=" * 65)
 
     if args.path:
-        sample_path = Path(args.path)
-        if sample_path.suffix == ".npz":
-            from src.record_custom import load_custom_sample
-            landmarks, meta = load_custom_sample(sample_path)
-            print(f"  Loaded Sample: {sample_path.name} (True Label: {meta.get('label')})")
-        else:
-            from src.data_loader import load_h5_file
-            landmarks = load_h5_file(sample_path)
-            print(f"  Loaded Sample: {sample_path.name}")
-
-        res = predictor.predict(landmarks, top_k=args.top_k, mode=args.mode)
+        res = predictor.predict_file(args.path, top_k=args.top_k, mode=args.mode)
+        gt = res.get("file_metadata", {}).get("ground_truth_label")
+        gt_info = f" (Ground Truth: {gt})" if gt else ""
+        print(f"  Sample: {res['file_metadata']['filename']}{gt_info}")
         print(f"\n  Result: {res['label']} ({res['confidence']*100:.2f}%) via [{res['recognizer']}]")
         print("  Top candidates:")
         for idx, item in enumerate(res["top_k"], 1):
