@@ -39,6 +39,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from src.config import EXPECTED_LANDMARK_SHAPE, NUM_CLASSES
 from src.predict import SignPredictor
+from src.hybrid_predict import HybridSignPredictor
 
 # Configure logging
 logging.basicConfig(
@@ -47,23 +48,24 @@ logging.basicConfig(
 )
 logger = logging.getLogger("isl500_api")
 
-# Global predictor instance (loaded once on application lifespan startup)
-predictor: Optional[SignPredictor] = None
+# Global hybrid predictor instance (loaded once on application lifespan startup)
+predictor: Optional[HybridSignPredictor] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifecycle manager: loads the trained model on startup."""
+    """Lifecycle manager: loads the trained models on startup."""
     global predictor
-    logger.info("Initializing ISL500 SignPredictor on application startup...")
+    logger.info("Initializing HybridSignPredictor on application startup...")
     try:
-        predictor = SignPredictor()
+        predictor = HybridSignPredictor()
         logger.info(
-            f"SignPredictor initialized successfully: device={predictor.device}, "
-            f"classes={predictor.num_classes}"
+            f"HybridSignPredictor initialized successfully: device={predictor.device}, "
+            f"ISL500 classes={predictor.isl500_predictor.num_classes}, "
+            f"Custom loaded={predictor.has_custom_model}"
         )
     except Exception as e:
-        logger.error(f"Failed to load SignPredictor on startup: {e}", exc_info=True)
+        logger.error(f"Failed to load HybridSignPredictor on startup: {e}", exc_info=True)
         predictor = None
     yield
     logger.info("Shutting down ISL500 API service.")
@@ -117,6 +119,10 @@ class PredictRequest(BaseModel):
         le=50,
         description="Number of top predictions to return (1-50, default: 5).",
     )
+    recognizer: Optional[str] = Field(
+        default="isl500",
+        description="Recognizer selection: 'isl500' (default), 'custom', or 'hybrid'.",
+    )
 
 
 class TopPrediction(BaseModel):
@@ -132,6 +138,14 @@ class PredictResponse(BaseModel):
     top_k: List[TopPrediction] = Field(..., description="Top-K predicted candidates ranked by confidence")
     raw_frame_count: int = Field(..., description="Number of frames received in the input sequence")
     effective_seq_len: int = Field(..., description="Active non-padded sequence length after preprocessing")
+    recognizer: Optional[str] = Field(
+        default="isl500",
+        description="Recognizer model used for the prediction ('isl500' or 'custom').",
+    )
+    hybrid_details: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Arbitration details when evaluated under hybrid mode.",
+    )
 
 
 class HealthResponse(BaseModel):
@@ -143,6 +157,8 @@ class HealthResponse(BaseModel):
     device_name: Optional[str] = None
     num_classes: Optional[int] = None
     checkpoint_name: Optional[str] = None
+    custom_model_loaded: bool = False
+    custom_classes: Optional[int] = None
 
 
 class RootResponse(BaseModel):
@@ -192,6 +208,8 @@ async def health():
             device_name=None,
             num_classes=None,
             checkpoint_name=None,
+            custom_model_loaded=False,
+            custom_classes=None,
         )
 
     dev_str = str(predictor.device)
@@ -206,8 +224,10 @@ async def health():
         model_loaded=True,
         device=dev_str,
         device_name=dev_name,
-        num_classes=predictor.num_classes,
-        checkpoint_name=predictor.checkpoint_path.name,
+        num_classes=predictor.isl500_predictor.num_classes,
+        checkpoint_name=predictor.isl500_predictor.checkpoint_path.name,
+        custom_model_loaded=predictor.has_custom_model,
+        custom_classes=predictor.custom_predictor.num_classes if predictor.has_custom_model else None,
     )
 
 
@@ -278,10 +298,16 @@ async def predict_gesture(request: PredictRequest):
 
     # Inference execution
     try:
-        result = predictor.predict(arr, top_k=request.top_k)
+        rec_mode = request.recognizer or "isl500"
+        result = predictor.predict(arr, top_k=request.top_k, mode=rec_mode)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(e),
+        )
+    except RuntimeError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
     except Exception as e:

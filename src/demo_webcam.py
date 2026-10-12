@@ -50,6 +50,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from src.config import MAX_SEQ_LEN, NUM_CLASSES
 from src.predict import SignPredictor
+from src.hybrid_predict import HybridSignPredictor
 
 try:
     import mediapipe as mp
@@ -129,13 +130,14 @@ def extract_frame_landmarks(
 
 def run_prediction(
     sequence: np.ndarray,
-    predictor: Optional[SignPredictor],
+    predictor: Optional[Any],
     use_api: bool,
     api_url: str,
     top_k: int = 5,
+    recognizer_mode: str = "isl500",
 ) -> Optional[Dict[str, Any]]:
     """
-    Dispatch landmark sequence to either local SignPredictor or FastAPI backend.
+    Dispatch landmark sequence to either local Predictor or FastAPI backend.
     """
     # Defensive check: sequence must have at least 1 non-empty frame
     has_active_hand = False
@@ -152,7 +154,11 @@ def run_prediction(
             logger.error("The 'requests' package is required for --use-api. Install with: pip install requests")
             return None
         try:
-            payload = {"landmarks": sequence.tolist(), "top_k": top_k}
+            payload = {
+                "landmarks": sequence.tolist(),
+                "top_k": top_k,
+                "recognizer": recognizer_mode,
+            }
             resp = requests.post(api_url, json=payload, timeout=2.5)
             if resp.status_code == 200:
                 return resp.json()
@@ -166,6 +172,8 @@ def run_prediction(
         if predictor is None:
             return None
         try:
+            if hasattr(predictor, "has_custom_model"):
+                return predictor.predict(sequence, top_k=top_k, mode=recognizer_mode)
             return predictor.predict(sequence, top_k=top_k)
         except Exception as e:
             logger.warning(f"Local inference error: {e}")
@@ -184,6 +192,7 @@ def draw_hud(
     is_recording: bool,
     fps: float,
     status_msg: str,
+    recognizer_mode: str = "isl500",
 ) -> np.ndarray:
     """
     Render a clean, semi-transparent HUD overlay with predictions and status.
@@ -221,9 +230,10 @@ def draw_hud(
             2,
             cv2.LINE_AA,
         )
+        pred_source = prediction.get("recognizer", recognizer_mode)
         cv2.putText(
             frame,
-            f"Confidence: {pred_conf:.1f}%  |  Active: {prediction.get('effective_seq_len', '?')} frames",
+            f"Confidence: {pred_conf:.1f}%  |  [{pred_source.upper()}]  |  Active: {prediction.get('effective_seq_len', '?')} frames",
             (16, 72),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.55,
@@ -234,7 +244,7 @@ def draw_hud(
     else:
         cv2.putText(
             frame,
-            "ISL500 Real-Time Sign Recognition",
+            f"ISL Sign Recognition [{recognizer_mode.upper()}]",
             (15, 42),
             cv2.FONT_HERSHEY_DUPLEX,
             0.95,
@@ -338,7 +348,7 @@ def draw_hud(
     )
 
     # ── Bottom Control Helper Bar ──
-    controls_text = "[Q/ESC] Quit   [SPACE] Predict   [C] Clear Buffer   [M] Toggle Mode"
+    controls_text = "[Q/ESC] Quit  [SPACE] Predict  [C] Clear  [M] Mode  [T] Recognizer"
     cv2.putText(
         frame,
         controls_text,
@@ -363,25 +373,18 @@ def run_webcam_demo(
     max_seq_len: int = MAX_SEQ_LEN,
     predict_interval: int = 5,
     min_active_frames: int = 15,
+    recognizer: str = "isl500",
 ) -> None:
     """
     Run the live webcam recognition loop.
-
-    Args:
-        camera_index       : OpenCV camera device index (default: 0).
-        use_api            : If True, send sequences to FastAPI backend.
-        api_url            : FastAPI predict endpoint URL.
-        checkpoint_path    : Checkpoint path for local inference.
-        max_seq_len        : Maximum rolling buffer sequence length (default: 150).
-        predict_interval   : Inference stride in continuous mode (frames).
-        min_active_frames  : Minimum frames with hands detected before predicting.
     """
     print("\n" + "=" * 65)
-    print("  ISL500 Real-Time Webcam Sign Recognition Demo")
+    print("  ISL Real-Time Webcam Sign Recognition Demo")
     print("=" * 65)
 
     # 1. Initialize inference engine
-    predictor: Optional[SignPredictor] = None
+    predictor: Optional[Any] = None
+    recognizer_mode = recognizer
     if use_api:
         print(f"[*] Inference backend : FastAPI ({api_url})")
         if not HAS_REQUESTS:
@@ -400,13 +403,17 @@ def run_webcam_demo(
             print("    Make sure the FastAPI server is running:")
             print("    uvicorn src.api:app --host 127.0.0.1 --port 8000\n")
     else:
-        print("[*] Inference backend : Direct PyTorch model (GPU/CPU)")
+        print(f"[*] Inference backend : Local PyTorch Engine (Mode: {recognizer_mode.upper()})")
         try:
-            predictor = SignPredictor(checkpoint_path=checkpoint_path)
+            predictor = HybridSignPredictor(isl500_ckpt=checkpoint_path)
             print(f"[*] Predictor loaded successfully on device: {predictor.device}")
         except Exception as e:
-            print(f"[ERROR] Failed to initialize SignPredictor: {e}")
-            return
+            print(f"[*] Fallback to SignPredictor: {e}")
+            try:
+                predictor = SignPredictor(checkpoint_path=checkpoint_path)
+            except Exception as e2:
+                print(f"[ERROR] Failed to initialize predictor: {e2}")
+                return
 
     # 2. Open VideoCapture
     print(f"[*] Initializing camera index {camera_index}...")
@@ -533,6 +540,7 @@ def run_webcam_demo(
                         predictor=predictor,
                         use_api=use_api,
                         api_url=api_url,
+                        recognizer_mode=recognizer_mode,
                     )
                     if pred is not None:
                         last_prediction = pred
@@ -548,6 +556,7 @@ def run_webcam_demo(
                 is_recording=is_recording,
                 fps=fps,
                 status_msg=status_msg,
+                recognizer_mode=recognizer_mode,
             )
 
             cv2.imshow(window_name, display_frame)
@@ -558,6 +567,13 @@ def run_webcam_demo(
             if key in (ord("q"), ord("Q"), 27):  # 27 = ESC
                 print("[*] Exit key pressed. Closing demo...")
                 break
+
+            elif key in (ord("t"), ord("T")):
+                modes = ["isl500", "custom", "hybrid"]
+                curr_idx = modes.index(recognizer_mode) if recognizer_mode in modes else 0
+                recognizer_mode = modes[(curr_idx + 1) % len(modes)]
+                status_msg = f"Switched Recognizer to: {recognizer_mode.upper()}"
+                print(f"[*] Recognizer switched to: {recognizer_mode.upper()}")
 
             elif key in (ord("c"), ord("C")):
                 landmark_buffer.clear()
@@ -592,6 +608,7 @@ def run_webcam_demo(
                                 predictor=predictor,
                                 use_api=use_api,
                                 api_url=api_url,
+                                recognizer_mode=recognizer_mode,
                             )
                             if pred:
                                 last_prediction = pred
@@ -607,6 +624,7 @@ def run_webcam_demo(
                             predictor=predictor,
                             use_api=use_api,
                             api_url=api_url,
+                            recognizer_mode=recognizer_mode,
                         )
                         if pred:
                             last_prediction = pred
@@ -660,6 +678,13 @@ def parse_args():
         dest="predict_interval",
         help="Inference frame interval in continuous mode (default: 5 frames)",
     )
+    parser.add_argument(
+        "--recognizer",
+        type=str,
+        default="isl500",
+        choices=["isl500", "custom", "hybrid"],
+        help="Recognition mode (default: isl500)",
+    )
     return parser.parse_args()
 
 
@@ -672,4 +697,5 @@ if __name__ == "__main__":
         checkpoint_path=args.checkpoint,
         max_seq_len=args.max_seq_len,
         predict_interval=args.predict_interval,
+        recognizer=args.recognizer,
     )

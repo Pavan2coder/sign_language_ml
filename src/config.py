@@ -85,3 +85,27 @@ LABEL_MAP_NAME:   str = "label_to_id.json"
 
 # Per-epoch loss / accuracy log saved in reports/
 HISTORY_CSV_NAME: str = "training_history.csv"
+
+
+# ============================================================
+# CUSTOM VOCABULARY EXTENSION CONFIGURATION
+# ============================================================
+
+CUSTOM_DATA_DIR: Path      = PROJECT_ROOT / "data"
+CUSTOM_RAW_DIR: Path       = CUSTOM_DATA_DIR / "custom_raw"
+CUSTOM_PROCESSED_DIR: Path = CUSTOM_DATA_DIR / "custom_processed"
+
+CUSTOM_CKPT_NAME: str      = "custom_model.pt"
+CUSTOM_LABEL_MAP_NAME: str = "custom_label_to_id.json"
+CUSTOM_RECORDS_CSV: str    = "custom_records.csv"
+
+# Target vocabulary extension labels (isolated signs + continuous phrases)
+CUSTOM_TARGET_LABELS = [
+    "Bye",
+    "Sorry",
+    "HelpMe",
+    "HowAreYou",
+    "WhereAreYou",
+    "WhatAreYouDoing",
+    "YouAreLookingBeautiful",
+]
