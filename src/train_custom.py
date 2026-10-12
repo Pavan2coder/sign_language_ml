@@ -342,7 +342,8 @@ def train_custom_model(
     weight_decay: float = 1e-4,
     hidden_size: int = 128,
     patience: int = 6,
-) -> None:
+    output_dir: Optional[Path] = None,
+) -> Dict[str, Any]:
     set_seeds(RANDOM_SEED)
     device = get_device()
     src_dir = Path(data_dir) if data_dir else CUSTOM_RAW_DIR
@@ -401,12 +402,14 @@ def train_custom_model(
     scheduler = ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=3)
     criterion = nn.CrossEntropyLoss()
 
-    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
-    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    ckpt_dir = Path(output_dir) if output_dir else CHECKPOINT_DIR
+    rep_dir = Path(output_dir) if output_dir else REPORT_DIR
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    rep_dir.mkdir(parents=True, exist_ok=True)
 
-    custom_ckpt_path = CHECKPOINT_DIR / CUSTOM_CKPT_NAME
-    custom_label_map_path = CHECKPOINT_DIR / CUSTOM_LABEL_MAP_NAME
-    history_csv = REPORT_DIR / "custom_training_history.csv"
+    custom_ckpt_path = ckpt_dir / CUSTOM_CKPT_NAME
+    custom_label_map_path = ckpt_dir / CUSTOM_LABEL_MAP_NAME
+    history_csv = rep_dir / "custom_training_history.csv"
 
     # Save label encoder JSON
     with open(custom_label_map_path, "w", encoding="utf-8") as f:
@@ -490,7 +493,7 @@ def train_custom_model(
     print("\nClassification Report:\n" + eval_results["report_str"])
 
     # Save metrics JSON
-    metrics_path = REPORT_DIR / "custom_test_metrics.json"
+    metrics_path = rep_dir / "custom_test_metrics.json"
     with open(metrics_path, "w", encoding="utf-8") as f:
         json.dump({
             "checkpoint": str(custom_ckpt_path),
@@ -506,6 +509,77 @@ def train_custom_model(
     print(f"[*] Label map saved  : {custom_label_map_path}")
     print(f"[*] Metrics saved    : {metrics_path}")
     print("=" * 65 + "\n")
+
+    # Explicit resource release to avoid Windows CUDA driver teardown segfault (0xC0000409)
+    del model, train_loader, val_loader, optimizer, scheduler, criterion
+    import gc
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    return eval_results
+
+
+def run_smoke_test() -> Dict[str, Any]:
+    """
+    Run a fast end-to-end smoke test on a synthetic multi-class custom dataset
+    in an isolated temporary directory to verify the complete training pipeline.
+    """
+    import tempfile
+    import shutil
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="isl_custom_smoke_"))
+    try:
+        raw_dir = tmp_dir / "custom_raw"
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        out_dir = tmp_dir / "output"
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        # Generate 12 synthetic recordings across 3 classes and 2 signers
+        classes = ["Bye", "HelpMe", "Sorry"]
+        signers = ["signer01", "signer02"]
+        for cls in classes:
+            for s in signers:
+                for rep in [1, 2]:
+                    n_frames = random.randint(15, 30)
+                    fake_landmarks = np.zeros((n_frames, 2, 21, 3), dtype=np.float32)
+                    fake_landmarks[:, 1, :, :] = np.random.uniform(0.1, 0.9, size=(n_frames, 21, 3))
+                    save_path = raw_dir / f"{cls}__{s}__rep{rep:03d}_smoke.npz"
+                    np.savez_compressed(
+                        save_path,
+                        landmarks=fake_landmarks,
+                        metadata_json=json.dumps({
+                            "label": cls,
+                            "signer": s,
+                            "rep": rep,
+                            "frame_count": n_frames,
+                            "fps": 30,
+                        }),
+                    )
+
+        print("\n[+] Starting smoke test training run (2 epochs, synthetic 3-class dataset)...")
+        results = train_custom_model(
+            data_dir=raw_dir,
+            epochs=2,
+            batch_size=4,
+            lr=1e-3,
+            hidden_size=32,
+            patience=2,
+            output_dir=out_dir,
+        )
+
+        assert (out_dir / CUSTOM_CKPT_NAME).exists(), "Smoke test failed: checkpoint not generated"
+        assert (out_dir / CUSTOM_LABEL_MAP_NAME).exists(), "Smoke test failed: label map not generated"
+        assert (out_dir / "custom_training_history.csv").exists(), "Smoke test failed: history CSV not generated"
+
+        print("\n[+] [SMOKE TEST PASSED] Full custom training pipeline is operational!")
+        return results
+    finally:
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def parse_args():
@@ -545,6 +619,11 @@ def parse_args():
         action="store_true",
         help="Only validate dataset statistics without training",
     )
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help="Run a fast end-to-end smoke test on synthetic data without modifying existing checkpoints",
+    )
     return parser.parse_args()
 
 
@@ -552,16 +631,17 @@ if __name__ == "__main__":
     args = parse_args()
     target_dir = Path(args.data_dir) if args.data_dir else CUSTOM_RAW_DIR
 
-    if args.validate_only:
+    if args.smoke:
+        run_smoke_test()
+    elif args.validate_only:
         df = discover_custom_dataset(target_dir)
         stats = validate_dataset(df)
         print(json.dumps(stats, indent=2))
-        sys.exit(0)
-
-    train_custom_model(
-        data_dir=target_dir,
-        epochs=args.epochs,
-        batch_size=args.batch_size,
-        lr=args.lr,
-        hidden_size=args.hidden_size,
-    )
+    else:
+        train_custom_model(
+            data_dir=target_dir,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            lr=args.lr,
+            hidden_size=args.hidden_size,
+        )
