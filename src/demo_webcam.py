@@ -51,6 +51,10 @@ if str(_PROJECT_ROOT) not in sys.path:
 from src.config import MAX_SEQ_LEN, NUM_CLASSES
 from src.predict import SignPredictor
 from src.hybrid_predict import HybridSignPredictor
+from src.record_custom import (
+    draw_styled_hand_landmarks,
+    TemporalHandTracker,
+)
 
 try:
     import mediapipe as mp
@@ -79,6 +83,7 @@ logger = logging.getLogger("demo_webcam")
 
 def extract_frame_landmarks(
     results: Any,
+    prev_landmarks: Optional[np.ndarray] = None,
 ) -> Tuple[np.ndarray, int]:
     """
     Extract 21 landmarks for up to 2 hands from MediaPipe detection results.
@@ -88,42 +93,89 @@ def extract_frame_landmarks(
         frame_landmarks[1]: Right Hand (21 landmarks, 3 coordinates)
 
     If a hand is absent, its entire 21x3 array remains all-zero (0.0).
-    If both hands are absent, the entire 2x21x3 array is all-zero.
+    Spatial horizontal disambiguation ensures Left and Right slots are not swapped
+    when MediaPipe reports identical handedness for both hands in mirrored selfie view.
 
     Args:
         results: MediaPipe Hands detection output.
+        prev_landmarks: Optional (2, 21, 3) array from previous frame for continuity.
 
     Returns:
         (frame_landmarks, num_hands_detected)
         where frame_landmarks is np.ndarray of shape (2, 21, 3), float32.
     """
     frame_landmarks = np.zeros((2, 21, 3), dtype=np.float32)
-    detected_count = 0
+    if not results or not results.multi_hand_landmarks or not results.multi_handedness:
+        return frame_landmarks, 0
 
-    if results.multi_hand_landmarks and results.multi_handedness:
-        used_slots = set()
+    candidates = []
+    for hand_lms, handedness in zip(results.multi_hand_landmarks, results.multi_handedness):
+        if not handedness.classification:
+            continue
+        classification = handedness.classification[0]
+        label = classification.label  # "Left" or "Right"
+        score = float(classification.score)
 
-        for hand_lms, handedness in zip(results.multi_hand_landmarks, results.multi_handedness):
-            label = handedness.classification[0].label  # "Left" or "Right"
+        coords = np.zeros((21, 3), dtype=np.float32)
+        valid = True
+        for i, lm in enumerate(hand_lms.landmark):
+            x = float(lm.x)
+            y = float(lm.y)
+            z = float(lm.z)
+            if not (np.isfinite(x) and np.isfinite(y) and np.isfinite(z)):
+                valid = False
+                break
+            coords[i] = [x, y, z]
 
-            # In mirrored selfie view:
-            # MediaPipe's "Left" corresponds to the user's Left hand -> slot 0
-            # MediaPipe's "Right" corresponds to the user's Right hand -> slot 1
-            slot = 0 if label == "Left" else 1
+        if not valid:
+            continue
 
-            # Prevent slot collision if both hands are detected with the same label
-            if slot in used_slots:
-                slot = 1 - slot
+        wrist_x = coords[0, 0]
+        candidates.append({
+            "coords": coords,
+            "label": label,
+            "score": score,
+            "wrist_x": wrist_x,
+        })
 
-            used_slots.add(slot)
-            detected_count += 1
+    num_detected = len(candidates)
+    if num_detected == 0:
+        return frame_landmarks, 0
 
-            for i, lm in enumerate(hand_lms.landmark):
-                frame_landmarks[slot, i, 0] = lm.x
-                frame_landmarks[slot, i, 1] = lm.y
-                frame_landmarks[slot, i, 2] = lm.z
+    if num_detected == 1:
+        cand = candidates[0]
+        target_slot = 0 if cand["label"] == "Left" else 1
 
-    return frame_landmarks, detected_count
+        if prev_landmarks is not None and prev_landmarks.shape == (2, 21, 3):
+            prev_left_active = bool(np.any(prev_landmarks[0] != 0.0))
+            prev_right_active = bool(np.any(prev_landmarks[1] != 0.0))
+            if prev_left_active != prev_right_active:
+                prev_slot = 0 if prev_left_active else 1
+                prev_wrist = prev_landmarks[prev_slot, 0, :2]
+                curr_wrist = cand["coords"][0, :2]
+                if float(np.linalg.norm(curr_wrist - prev_wrist)) < 0.18 and cand["score"] < 0.85:
+                    target_slot = prev_slot
+
+        frame_landmarks[target_slot] = cand["coords"]
+        return frame_landmarks, 1
+
+    cand_a = candidates[0]
+    cand_b = candidates[1]
+    if cand_a["label"] != cand_b["label"]:
+        slot_a = 0 if cand_a["label"] == "Left" else 1
+        slot_b = 1 - slot_a
+        frame_landmarks[slot_a] = cand_a["coords"]
+        frame_landmarks[slot_b] = cand_b["coords"]
+    else:
+        # Duplicate label disambiguation by horizontal X in mirrored selfie mode
+        if cand_a["wrist_x"] <= cand_b["wrist_x"]:
+            frame_landmarks[0] = cand_a["coords"]
+            frame_landmarks[1] = cand_b["coords"]
+        else:
+            frame_landmarks[0] = cand_b["coords"]
+            frame_landmarks[1] = cand_a["coords"]
+
+    return frame_landmarks, 2
 
 
 # ── Inference Dispatcher ──────────────────────────────────────────────────────
@@ -415,9 +467,14 @@ def run_webcam_demo(
                 print(f"[ERROR] Failed to initialize predictor: {e2}")
                 return
 
-    # 2. Open VideoCapture
+    # 2. Open VideoCapture (DirectShow on Windows for low latency)
     print(f"[*] Initializing camera index {camera_index}...")
-    cap = cv2.VideoCapture(camera_index)
+    if sys.platform.startswith("win"):
+        cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+        if not cap.isOpened():
+            cap = cv2.VideoCapture(camera_index)
+    else:
+        cap = cv2.VideoCapture(camera_index)
 
     if not cap.isOpened():
         print(
@@ -430,9 +487,11 @@ def run_webcam_demo(
         )
         return
 
-    # Set camera resolution (e.g. 1280x720 if supported)
+    # Set camera resolution and buffer settings
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    cap.set(cv2.CAP_PROP_FPS, 30)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     # 3. Initialize MediaPipe Hands
     mp_hands = mp.solutions.hands
@@ -442,9 +501,13 @@ def run_webcam_demo(
     hands_detector = mp_hands.Hands(
         static_image_mode=False,
         max_num_hands=2,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5,
+        model_complexity=1,
+        min_detection_confidence=0.70,
+        min_tracking_confidence=0.60,
     )
+
+    # Hand tracker with adaptive display filter and raw inference preservation
+    tracker = TemporalHandTracker(enable_smoothing=True, min_cutoff=1.0, beta=5.0)
 
     # Sequence buffer (stores 2, 21, 3 frames)
     landmark_buffer: deque = deque(maxlen=max_seq_len)
@@ -495,19 +558,13 @@ def run_webcam_demo(
             results = hands_detector.process(rgb_frame)
             rgb_frame.flags.writeable = True
 
-            # Draw MediaPipe hand landmarks on frame
-            if results.multi_hand_landmarks:
-                for hand_landmarks in results.multi_hand_landmarks:
-                    mp_drawing.draw_landmarks(
-                        frame,
-                        hand_landmarks,
-                        mp_hands.HAND_CONNECTIONS,
-                        mp_drawing_styles.get_default_hand_landmarks_style(),
-                        mp_drawing_styles.get_default_hand_connections_style(),
-                    )
+            # Process with TemporalHandTracker
+            raw_lms, display_lms, num_detected, tracking_health, confs = tracker.process(results, curr_time)
 
-            # Extract 2-hand landmarks: shape (2, 21, 3)
-            frame_landmarks, num_detected = extract_frame_landmarks(results)
+            # Draw colourful, human-hand-aligned skeletal overlay
+            draw_styled_hand_landmarks(frame, display_lms, confidences=confs)
+
+            frame_landmarks = raw_lms
             frame_counter += 1
 
             # Track hand presence
